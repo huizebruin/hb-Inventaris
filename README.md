@@ -58,7 +58,7 @@ inventory plus a small demo dataset.
   offline)
 - `docker-compose.yml`, `Dockerfile` — deployment
 
-hb-Inventaris port http://ipadres::5000
+hb-Inventaris port http://ipadres:5000
 
 ## License
 

@@ -4,6 +4,8 @@ Self-hosted inventory management app for electronic components. Flask +
 SQLite backend, single-page frontend, runs in Docker.
 
 Made by [huizebruin.nl](https://huizebruin.nl).
+<img width="1919" height="908" alt="image" src="https://github.com/user-attachments/assets/fe64ef7e-de9b-4ccc-9041-08463941c275" />
+
 
 ## Note: LAN use only
 

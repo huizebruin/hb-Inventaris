@@ -4,6 +4,7 @@ Zelf-gehoste inventarisbeheer-app voor elektronica-onderdelen. Flask +
 SQLite backend, single-page frontend.
 
 Gemaakt door [huizebruin.nl](https://huizebruin.nl).
+
 <img width="1919" height="908" alt="image" src="https://github.com/user-attachments/assets/fe64ef7e-de9b-4ccc-9041-08463941c275" />
 
 ## Let op: alleen voor LAN-gebruik

@@ -1,0 +1,21 @@
+services:
+  hb-inventaris:
+
+    build: .
+    container_name: inventaris
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data        # Database, .env, backups config
+      - ./media:/app/media      # Geüploade afbeeldingen en PDFs
+      - ./backups:/app/backups  # Automatische dagelijkse backups
+      - ./static:/app/static
+    environment:
+      - TZ=Europe/Amsterdam
+
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"  # Automatische updates via Watchtower
+
+    env_file:
+      - .env

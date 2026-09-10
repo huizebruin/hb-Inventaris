@@ -1,0 +1,13 @@
+# Persoonlijke data - NOOIT delen
+data/
+media/
+backups/
+
+# Secrets
+.env
+
+# Overig
+__pycache__/
+*.pyc
+.DS_Store
+*.log

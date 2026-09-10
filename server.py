@@ -12,7 +12,13 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 
 # ── LOAD .env ─────────────────────────────────────────────────
-_env_file = Path('/app/data/.env')
+# BASE_DIR = map waar server.py in staat. Werkt zowel in Docker (WORKDIR /app)
+# als los op Windows/Mac/Linux, zonder aanpassingen.
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get('HB_DATA_DIR', BASE_DIR / 'data'))
+DATA_DIR.mkdir(exist_ok=True, parents=True)
+
+_env_file = DATA_DIR / '.env'
 if _env_file.exists():
     for line in _env_file.read_text().splitlines():
         line = line.strip()
@@ -36,16 +42,16 @@ def set_utf8(r):
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # ── PATHS ─────────────────────────────────────────────────────
-DB_FILE    = Path('/app/data/inventaris.db')
-JSON_FILE  = Path('/app/data.json')
-MEDIA_DIR  = Path('/app/media')
-BACKUP_DIR = Path('/app/backups')
-MEDIA_DIR.mkdir(exist_ok=True)
-BACKUP_DIR.mkdir(exist_ok=True)
+DB_FILE    = DATA_DIR / 'inventaris.db'
+JSON_FILE  = BASE_DIR / 'data.json'
+MEDIA_DIR  = Path(os.environ.get('HB_MEDIA_DIR', BASE_DIR / 'media'))
+BACKUP_DIR = Path(os.environ.get('HB_BACKUP_DIR', BASE_DIR / 'backups'))
+MEDIA_DIR.mkdir(exist_ok=True, parents=True)
+BACKUP_DIR.mkdir(exist_ok=True, parents=True)
 ALLOWED_EXT = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'}
 
 # ── AI LOOKUP (Gemini) ───────────────────────────────────────────
-# Zet GEMINI_API_KEY=... in /app/data/.env om deze functie te activeren.
+# Zet GEMINI_API_KEY=... in data/.env om deze functie te activeren.
 # Optioneel: GEMINI_MODEL=... (standaard gemini-2.5-flash)
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 GEMINI_MODEL   = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash')
@@ -414,7 +420,7 @@ def _call_gemini(prompt, max_tokens=2000, thinking_level='low', image_b64=None, 
     Retourneert (parsed_dict, None) bij succes, of (None, (error_dict, status_code)) bij fout.
     Geef image_b64/image_mime mee voor een multimodale (foto) aanvraag."""
     if not GEMINI_API_KEY:
-        return None, ({'error': 'Geen GEMINI_API_KEY ingesteld in /app/data/.env'}, 400)
+        return None, ({'error': 'Geen GEMINI_API_KEY ingesteld in data/.env'}, 400)
 
     content_parts = []
     if image_b64:

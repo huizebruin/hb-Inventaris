@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>HuizeBruin Inventaris</title>
   <meta name="theme-color" content="#111318">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -38,6 +38,8 @@
         <span><b id="sParts">0</b> onderdelen</span>
         <span><b id="sStock">0</b> op voorraad</span>
       </div>
+      <!-- Oude badges blijven (verborgen) bestaan zodat bestaande code ze kan blijven bijwerken -->
+      <div id="legacyBadges" hidden>
       <button id="warnBtn" onclick="showLowStock()"
         style="display:none;background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px"
         title="Lage voorraad">
@@ -64,83 +66,24 @@
           style="background:var(--acc2);color:#fff;border-radius:10px;padding:2px 7px;font-size:11px;font-weight:700"
           id="suggestBadge">💡</span>
       </button>
+      </div>
+      <div class="alert-wrap" id="alertWrap">
+        <button class="alert-btn" id="alertBtn" onclick="toggleAlerts(event)" title="Meldingen" aria-haspopup="true"
+          aria-expanded="false">
+          <span class="alert-ic">🔔</span><span class="alert-count" id="alertCount" hidden>0</span>
+        </button>
+        <div class="alert-pop" id="alertPop" hidden></div>
+      </div>
       <button onclick="toggleTheme()" id="themeBtn" title="Licht/donker wisselen"
         style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:4px 6px;border-radius:4px">☀️</button>
 
-      <span class="ver">v3.7.0</span>
+      <span class="ver" hidden>v3.8.0</span>
     </div>
   </header>
 
-  <!-- Mobile More Menu Bottom Sheet -->
+  <!-- Mobile menu bottom sheet (inhoud komt uit buildMenus()) -->
   <div id="moreSheet" style="display:none;position:fixed;inset:0;z-index:400" onclick="closeMoreMenu()">
-    <div
-      style="position:absolute;bottom:0;left:0;right:0;background:var(--surf);border-radius:14px 14px 0 0;padding:6px 0 calc(env(safe-area-inset-bottom,0px) + 6px);max-height:85vh;overflow-y:auto;animation:slideUp .2s ease"
-      onclick="event.stopPropagation()">
-      <div style="width:32px;height:3px;background:var(--border);border-radius:2px;margin:0 auto 6px"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:0 12px 6px">
-        <span style="font-size:12px;font-weight:600;color:var(--text)">Menu</span>
-        <button onclick="closeMoreMenu()"
-          style="background:var(--surf2);border:1px solid var(--border);border-radius:20px;color:var(--text2);font-size:11px;padding:3px 10px;cursor:pointer">✕</button>
-      </div>
-
-      <!-- Sectie: Overzichten -->
-      <div
-        style="padding:2px 12px 2px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text3)">
-        Overzichten</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px 10px 8px">
-        <div onclick="openDashboard();closeMoreMenu()"
-          style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;padding:6px 2px;border-radius:8px;background:var(--surf2)">
-          <span style="font-size:18px">📊</span><span style="font-size:9px;color:var(--text2)">Dashboard</span>
-        </div>
-        <div onclick="openOrderList();closeMoreMenu()"
-          style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;padding:6px 2px;border-radius:8px;background:var(--surf2)">
-          <span style="font-size:18px">📋</span><span style="font-size:9px;color:var(--text2)">Bestellen</span>
-        </div>
-        <div onclick="openHistModal();closeMoreMenu()"
-          style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;padding:6px 2px;border-radius:8px;background:var(--surf2)">
-          <span style="font-size:18px">📜</span><span style="font-size:9px;color:var(--text2)">Geschiedenis</span>
-        </div>
-        <div onclick="toggleArchived();closeMoreMenu()"
-          style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;padding:6px 2px;border-radius:8px;background:var(--surf2)">
-          <span style="font-size:18px">📦</span><span style="font-size:9px;color:var(--text2)">Archief</span>
-        </div>
-      </div>
-
-      <!-- Sectie: Beheer -->
-      <div
-        style="border-top:1px solid var(--border);padding:3px 12px 1px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text3)">
-        Beheer</div>
-      <div class="mmitem cpt" onclick="openKastModal();closeMoreMenu()">🗄 Kasten</div>
-      <div class="mmitem cpt" onclick="openLocModal();closeMoreMenu()">📍 Locaties</div>
-      <div class="mmitem cpt" onclick="openCatManager();closeMoreMenu()">🗂 Categorieën</div>
-      <div class="mmitem cpt" onclick="openSuppModal();closeMoreMenu()">🏪 Leveranciers</div>
-      <div class="mmitem cpt" onclick="openMediaModal();closeMoreMenu()">🖼 Media</div>
-      <div class="mmitem cpt" onclick="openProjectsModal();closeMoreMenu()">🔗 Projecten / BOM</div>
-      <div class="mmitem cpt" onclick="openOrdersModal();closeMoreMenu()">📦 Inkooporders</div>
-
-      <!-- Sectie: Acties -->
-      <div
-        style="border-top:1px solid var(--border);padding:3px 12px 1px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text2)">
-        Acties</div>
-      <div class="mmitem cpt" onclick="openPrintModal();closeMoreMenu()">🏷 Labels printen</div>
-      <div class="mmitem cpt" onclick="openPackingSlip();closeMoreMenu()">📋 Pakbon genereren</div>
-      <div class="mmitem cpt" onclick="openPackagingCounter();closeMoreMenu()">📦 Verpakkingsteller</div>
-      <div class="mmitem cpt" onclick="openExport();closeMoreMenu()">📤 Exporteren</div>
-      <div class="mmitem cpt" onclick="exportExcel();closeMoreMenu()">📊 Excel export</div>
-      <div class="mmitem cpt" onclick="downloadBackup();closeMoreMenu()">💾 Backup downloaden</div>
-      <div class="mmitem cpt" onclick="openBulkAiLookup();closeMoreMenu()">🤖 Bulk AI-lookup</div>
-
-      <!-- Sectie: Instellingen -->
-      <div
-        style="border-top:1px solid var(--border);padding:3px 12px 1px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text2)">
-        Instellingen</div>
-      <div class="mmitem cpt" onclick="openRefreshSettings();closeMoreMenu()">🔄 Auto-refresh</div>
-      <div class="mmitem cpt" onclick="openWebhookSettings();closeMoreMenu()">📡 Webhook / HA push</div>
-      <div class="mmitem cpt" onclick="toggleReadOnly();closeMoreMenu()" id="readonlyBtnMob">🔒 Alleen-lezen</div>
-      <div class="mmitem cpt" onclick="toggleTheme();closeMoreMenu()">☀️ Thema wisselen</div>
-      <div class="mmitem cpt" onclick="openHelp();closeMoreMenu()">❓ Help & sneltoetsen</div>
-
-    </div>
+    <div class="mm-sheet mm" id="moreSheetPanel" onclick="event.stopPropagation()"></div>
   </div>
 
   <div class="aside-overlay" id="asideOverlay" onclick="closeSidebar()"></div>
@@ -157,57 +100,20 @@
             style="font-size:11px">📦 Archief</button>
           <div style="position:relative" id="moreMenuWrap">
             <button class="btn sec" onclick="toggleMoreMenu()" style="font-size:16px;padding:6px 10px">☰</button>
-            <!-- Desktop dropdown -->
-            <div id="moreMenuDesktop"
-              style="display:none;position:absolute;right:0;top:34px;background:var(--surf);border:1px solid var(--border);border-radius:var(--r);z-index:150;min-width:200px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,.4)">
-              <div
-                style="padding:4px 14px 2px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text2)">
-                Beheer</div>
-              <div class="mmitem" onclick="openKastModal();closeMoreMenu()">🗄 Kasten</div>
-              <div class="mmitem" onclick="openLocModal();closeMoreMenu()">📍 Locaties</div>
-              <div class="mmitem" onclick="openSuppModal();closeMoreMenu()">🏪 Leveranciers</div>
-              <div class="mmitem" onclick="openMediaModal();closeMoreMenu()">🖼 Media</div>
-              <div class="mmitem" onclick="openProjectsModal();closeMoreMenu()">🔗 Projecten / BOM</div>
-              <div class="mmitem" onclick="openOrdersModal();closeMoreMenu()">📦 Inkooporders</div>
-              <div
-                style="border-top:1px solid var(--border);padding:4px 14px 2px;margin-top:2px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text2)">
-                Acties</div>
-              <div class="mmitem" onclick="openPrintModal();closeMoreMenu()">🏷 Labels printen</div>
-              <div class="mmitem" onclick="openPackingSlip();closeMoreMenu()">📋 Pakbon</div>
-              <div class="mmitem" onclick="openPackagingCounter();closeMoreMenu()">📦 Verpakkingsteller</div>
-              <div class="mmitem" onclick="openHistModal();closeMoreMenu()">📜 Geschiedenis</div>
-              <div class="mmitem" onclick="bulkStockImportCSV();closeMoreMenu()">📥 Bulk stock import CSV</div>
-              <div class="mmitem" onclick="openColSettings();closeMoreMenu()">⚙ Kolommen instellen</div>
-              <div class="mmitem" onclick="openBulkAiLookup();closeMoreMenu()">🤖 Bulk AI-lookup</div>
-              <div class="mmitem" onclick="openCatManager();closeMoreMenu()">🗂 Categorieën beheren</div>
-              <div
-                style="border-top:1px solid var(--border);padding:4px 14px 2px;margin-top:2px;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text2)">
-                Instellingen</div>
-              <div class="mmitem" onclick="openRefreshSettings();closeMoreMenu()">🔄 Auto-refresh</div>
-              <div class="mmitem" onclick="openWebhookSettings();closeMoreMenu()">📡 Webhook / HA push</div>
-              <div class="mmitem" onclick="toggleReadOnly();closeMoreMenu()" id="readonlyBtn">🔒 Alleen-lezen</div>
-              <div class="mmitem" onclick="downloadBackup();closeMoreMenu()">💾 Backup</div>
-              <div class="mmitem" onclick="openLinksPanel();closeMoreMenu()">🔗 Links & Deep-links</div>
-              <div class="mmitem" onclick="openHelp();closeMoreMenu()">❓ Help</div>
-
-            </div>
+            <!-- Desktop dropdown (inhoud komt uit buildMenus()) -->
+            <div id="moreMenuDesktop" class="mm-drop mm" style="display:none"></div>
           </div>
           <button class="btn" onclick="openAdd()">+ Nieuw</button>
         </div>
       </div>
-      <div id="bulkBar"
-        style="display:none;padding:7px 16px;border-bottom:1px solid var(--border);background:rgba(240,192,64,.08);display:none;align-items:center;gap:10px;font-size:12px">
-        <span id="bulkCount" style="color:var(--acc);font-weight:600"></span>
-        <span style="color:var(--text3)">geselecteerd</span>
-        <button class="abtn" onclick="bulkSetLocation()" style="font-size:11px">📍 Locatie wijzigen</button>
-        <button class="abtn" onclick="bulkSetCategory()" style="font-size:11px">🏷 Categorie wijzigen</button>
-        <button class="abtn" onclick="bulkAdjStock()" style="font-size:11px">🔢 Voorraad aanpassen</button>
-        <button class="abtn" onclick="bulkAddTag()" style="font-size:11px">🏷 Tag toevoegen</button>
-        <button class="abtn" onclick="bulkRemoveTag()" style="font-size:11px">🏷 Tag verwijderen</button>
-        <button class="abtn" onclick="bulkPrintLabels()" style="font-size:11px">🖨 Labels printen</button>
-        <button class="abtn" onclick="bulkArchive()" style="font-size:11px;color:var(--text3)">📦 Archiveren</button>
-        <button class="abtn del" onclick="bulkDelete()" style="font-size:11px;margin-left:auto">🗑 Verwijderen</button>
-        <button class="abtn" onclick="clearSelection()" style="font-size:11px">✕ Deselecteer</button>
+      <div id="chipBar" class="chips" style="display:none" role="group" aria-label="Snelfilters"></div>
+      <div id="bulkBar" class="bulkbar" style="display:none">
+        <span class="bb-count"><b id="bulkCount"></b><span class="bb-txt">geselecteerd</span></span>
+        <button class="abtn" onclick="bulkSetLocation()" title="Locatie wijzigen">📍 <span>Locatie</span></button>
+        <button class="abtn" onclick="bulkSetCategory()" title="Categorie wijzigen">🏷 <span>Categorie</span></button>
+        <button class="abtn" onclick="bulkAdjStock()" title="Voorraad aanpassen">🔢 <span>Voorraad</span></button>
+        <button class="abtn" aria-haspopup="menu" aria-expanded="false" onclick="bulkMore(event)" title="Meer acties">⋯ <span>Meer</span></button>
+        <button class="abtn bb-clear" onclick="clearSelection()" title="Selectie wissen" aria-label="Selectie wissen">✕</button>
       </div>
       <div id="recentBar"
         style="display:none;padding:5px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;background:var(--surf2);font-size:11px">
@@ -219,14 +125,14 @@
             <tr>
               <th style="width:32px"><input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)"
                   style="cursor:pointer"></th>
-              <th style="width:46px"></th>
-              <th onclick="sb('name')">Naam</th>
-              <th onclick="sb('IPN')" class="hide-sm">IPN</th>
-              <th onclick="sb('category')" class="hide-sm">Categorie</th>
-              <th onclick="sb('location')" class="hide-sm">Locatie</th>
-              <th onclick="sb('price')" style="text-align:right" class="hide-sm">Prijs</th>
-              <th onclick="sb('stock')" style="text-align:right">Voorraad</th>
-              <th onclick="sb('modified')" class="hide-sm" style="text-align:right;font-size:10px;color:var(--text3)"
+              <th data-col="img" style="width:46px"></th>
+              <th data-col="name" onclick="sb('name')">Naam</th>
+              <th data-col="IPN" onclick="sb('IPN')" class="hide-sm">IPN</th>
+              <th data-col="cat" onclick="sb('category')" class="hide-sm">Categorie</th>
+              <th data-col="loc" onclick="sb('location')">Locatie</th>
+              <th data-col="price" onclick="sb('price')" style="text-align:right" class="hide-sm">Prijs</th>
+              <th data-col="stock" onclick="sb('stock')" style="text-align:right">Voorraad</th>
+              <th data-col="modified" onclick="sb('modified')" class="hide-sm" style="text-align:right;font-size:10px;color:var(--text3)"
                 title="Sorteer op laatste wijziging">Gewijzigd</th>
               <th></th>
             </tr>
@@ -248,6 +154,7 @@
     <button onclick="toggleSidebar()" id="navCats"><span class="ico">☰</span>Categorieën</button>
     <button onclick="openAdd()"><span class="ico">＋</span>Toevoegen</button>
     <button onclick="openLocModal()"><span class="ico">📍</span>Locaties</button>
+    <button onclick="toggleMoreMenu()" id="navMenu"><span class="ico">⋯</span>Menu</button>
   </nav>
 
   <!-- Detail -->
@@ -1645,13 +1552,36 @@
       return Math.max(...scores);
     }
 
-    function filtered() {
+    // ── SNELFILTERS (chips) ───────────────────────────────────────
+    const CHIP_DEFS = [
+      { k: 'low', ic: '⚠', lbl: 'Lage voorraad', test: p => p.minStock > 0 && (p.stock || 0) < p.minStock },
+      { k: 'zero', ic: '∅', lbl: 'Leeg', test: p => (p.stock || 0) === 0 },
+      { k: 'noloc', ic: '📍', lbl: 'Zonder locatie', test: p => !p.locId },
+      { k: 'pinned', ic: '📌', lbl: 'Vastgezet', test: p => _pinned.has(p.id) },
+      { k: 'exp', ic: '⏰', lbl: 'Verloopt', test: p => { const s = getExpiryStatus(p.expiryDate); return s === 'expired' || s === 'critical' || s === 'warning'; } },
+    ];
+    window._chips = { low: false, zero: false, noloc: false, pinned: false, exp: false };
+
+    function renderChips() {
+      const bar = document.getElementById('chipBar'); if (!bar) return;
+      const base = filtered({ noChips: true });
+      let h = '', anyOn = false;
+      CHIP_DEFS.forEach(c => {
+        const n = base.filter(c.test).length, on = _chips[c.k];
+        if (!n && !on) return;
+        if (on) anyOn = true;
+        h += `<button class="chip ${c.k}${on ? ' on' : ''}" aria-pressed="${on}" onclick="toggleChip('${c.k}')"><span class="ic">${c.ic}</span>${c.lbl}<span class="n">${n}</span></button>`;
+      });
+      if (anyOn) h += '<button class="chip clear" onclick="clearChips()">✕ Wis filters</button>';
+      bar.innerHTML = h;
+      bar.style.display = h ? '' : 'none';
+    }
+    function toggleChip(k) { _chips[k] = !_chips[k]; window._zeroStockMode = _chips.zero; renderTable(); updateAlertCenter(); }
+    function clearChips() { Object.keys(_chips).forEach(k => _chips[k] = false); window._zeroStockMode = false; renderTable(); updateAlertCenter(); }
+
+    function filtered(opts = {}) {
       let l = _showArchived ? parts : parts.filter(p => p.active !== false);
-      if (window._lowStockMode) {
-        l = l.filter(p => p.minStock > 0 && (p.stock || 0) < p.minStock);
-      } else if (window._zeroStockMode) {
-        l = l.filter(p => (p.stock || 0) === 0);
-      } else if (srch.trim()) {
+      if (srch.trim()) {
         const q = srch.toLowerCase().trim();
         if (q.startsWith('#')) {
           const tag = q.slice(1);
@@ -1674,6 +1604,8 @@
       if (_advFilter.tag) l = l.filter(p => (p.tags || []).includes(_advFilter.tag));
       if (_advFilter.lowStock) l = l.filter(p => p.minStock > 0 && (p.stock || 0) < p.minStock);
       if (_advFilter.noLoc) l = l.filter(p => !p.locId);
+      if (opts.noChips) return l;
+      CHIP_DEFS.forEach(c => { if (_chips[c.k]) l = l.filter(c.test); });
       l.sort((a, b) => {
         // Pinned always first
         const ap = _pinned.has(a.id) ? 0 : 1, bp = _pinned.has(b.id) ? 0 : 1;
@@ -1696,6 +1628,110 @@
       return l;
     }
 
+
+    // ── VOORRAAD IN DE RIJ (+/− en statusbalk) ────────────────────
+    function stockBarState(p) {
+      const q = p.stock || 0, min = p.minStock || 0;
+      return { w: Math.min(100, Math.round(q / (min * 2) * 100)), cls: q < min ? 'sb-red' : q < min * 1.5 ? 'sb-orange' : 'sb-green', tip: `Voorraad ${q} · minimum ${min}` };
+    }
+    function stockBarHTML(p) {
+      if (!(p.minStock > 0)) return '';
+      const b = stockBarState(p);
+      return `<div class="sbar" title="${b.tip}"><i class="${b.cls}" style="width:${b.w}%"></i><b></b></div>`;
+    }
+    function qtyHTML(p) {
+      const q = p.stock || 0, id = p.id;
+      return `<div class="qcell" data-qcell="${id}" onclick="event.stopPropagation()">
+        <div class="qwrap">
+          <button class="qb" onclick="rowAdj(${id},-1)" aria-label="Eén minder">−</button>
+          <span class="qv ${qClass(q, p.minStock)}" onclick="inlineStockEdit(event,${id})" title="Klik om aan te passen">${q}</span>
+          <button class="qb" onclick="rowAdj(${id},1)" aria-label="Eén meer">+</button>
+        </div>${stockBarHTML(p)}</div>`;
+    }
+    function paintQty(p) {
+      const q = p.stock || 0;
+      document.querySelectorAll(`[data-qcell="${p.id}"]`).forEach(c => {
+        const v = c.querySelector('.qv');
+        if (v) { v.textContent = q; v.className = 'qv ' + qClass(q, p.minStock); }
+        const bar = c.querySelector('.sbar');
+        if (bar && p.minStock > 0) { const b = stockBarState(p), i = bar.querySelector('i'); i.style.width = b.w + '%'; i.className = b.cls; bar.title = b.tip; }
+      });
+      if (selId === p.id) { const n = document.getElementById('dNum'); if (n) { n.textContent = q; n.className = 'num ' + qClass(q, p.minStock); } }
+      const sEl = document.getElementById('sStock');
+      if (sEl) sEl.textContent = parts.filter(x => x.active !== false && x.stock > 0).length;
+      updateAlertCenter(); renderChips();
+    }
+    const _adjPending = {};
+    async function rowAdj(id, delta) {
+      const p = parts.find(x => x.id === id); if (!p) return;
+      if (delta < 0 && (p.stock || 0) <= 0) return;
+      p.stock = Math.max(0, (p.stock || 0) + delta);
+      _adjPending[id] = (_adjPending[id] || 0) + 1;
+      paintQty(p);
+      try {
+        const r = await api(`/api/parts/${id}/stock`, 'PATCH', { delta });
+        if (_adjPending[id] === 1) p.stock = r.stock;
+      } catch (err) {
+        p.stock = Math.max(0, (p.stock || 0) - delta);
+        toast('⚠ Voorraad niet opgeslagen');
+      } finally {
+        _adjPending[id]--;
+        if (!_adjPending[id]) { delete _adjPending[id]; paintQty(p); }
+      }
+    }
+
+    // ── POPOVER-MENU (rij-acties, bulk "Meer") ────────────────────
+    let _popItems = [];
+    function closePop() {
+      const el = document.getElementById('popMenu');
+      if (el) { el._anchor?.setAttribute('aria-expanded', 'false'); el.remove(); }
+    }
+    function openPop(anchor, items) {
+      const cur = document.getElementById('popMenu');
+      if (cur && cur._anchor === anchor) { closePop(); return; }
+      closePop();
+      _popItems = items;
+      const pop = document.createElement('div');
+      pop.id = 'popMenu'; pop.className = 'pop'; pop.setAttribute('role', 'menu');
+      pop.innerHTML = items.map((it, i) => it.sep ? '<div class="pop-sep"></div>' :
+        `<button class="pop-item${it.danger ? ' danger' : ''}" role="menuitem" onclick="popPick(${i})"><span class="ic">${it.ic || ''}</span>${it.label}</button>`).join('');
+      document.body.appendChild(pop);
+      const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+      const left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+      let top = r.bottom + 4;
+      if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+      pop.style.left = left + 'px'; pop.style.top = top + 'px';
+      pop._anchor = anchor; anchor.setAttribute('aria-expanded', 'true');
+    }
+    function popPick(i) { const it = _popItems[i]; closePop(); if (it && it.fn) it.fn(); }
+    document.addEventListener('click', e => { if (!e.target.closest('#popMenu') && !e.target.closest('[aria-haspopup="menu"]')) closePop(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); });
+    window.addEventListener('scroll', closePop, true);
+    window.addEventListener('resize', closePop);
+
+    function rowMenu(e, id) {
+      e.stopPropagation();
+      const p = parts.find(x => x.id === id); if (!p) return;
+      const pin = _pinned.has(id);
+      const items = [{ ic: pin ? '📌' : '📍', label: pin ? 'Losmaken' : 'Vastzetten', fn: () => togglePin(id) }];
+      if (p.link && /^https?:/i.test(p.link)) items.push({ ic: '🔗', label: 'Link openen', fn: () => window.open(p.link, '_blank', 'noopener') });
+      items.push({ ic: '✏', label: 'Bewerken', fn: () => openEdit(id) });
+      items.push({ sep: true });
+      items.push({ ic: '🗑', label: 'Verwijderen', danger: true, fn: () => delPart(id) });
+      openPop(e.currentTarget, items);
+    }
+    function bulkMore(e) {
+      e.stopPropagation();
+      openPop(e.currentTarget, [
+        { ic: '🏷', label: 'Tag toevoegen', fn: () => bulkAddTag() },
+        { ic: '🏷', label: 'Tag verwijderen', fn: () => bulkRemoveTag() },
+        { ic: '🖨', label: 'Labels printen', fn: () => bulkPrintLabels() },
+        { ic: '📦', label: 'Archiveren', fn: () => bulkArchive() },
+        { sep: true },
+        { ic: '🗑', label: 'Verwijderen…', danger: true, fn: () => bulkDelete() },
+      ]);
+    }
+
     function thumb(p) {
       if (p.img) return `<img src="${esc(p.img)}" style="width:32px;height:32px;border-radius:4px;object-fit:cover;display:block">`;
       return `<div class="ph">📦</div>`;
@@ -1703,6 +1739,8 @@
 
     function qClass(q, minStock) {
       if (q === 0) return 'qz';
+      // Met een ingesteld minimum: rood onder het minimum, oranje tot 1,5× het minimum (zelfde regel als de statusbalk)
+      if (minStock > 0) return q < minStock ? 'qred' : q < minStock * 1.5 ? 'qlow' : 'qok';
       if (q < 5) return 'qred';
       if (q <= 10) return 'qlow';
       return 'qok';
@@ -1726,21 +1764,16 @@
       <td class="tdn">
         ${pinned ? '<span style="color:var(--acc);font-size:10px;margin-right:3px">📌</span>' : ''}
         ${archived ? '<span style="color:var(--text3);font-size:10px;margin-right:3px">📦</span>' : ''}
-        ${esc(p.name)}<small>${esc(p.desc || '')}</small>${noteIcon}${expiryIcon}
+        ${esc(p.name)}<small>${!_colVis.IPN && p.IPN ? '<span class="ipn-inline">' + esc(p.IPN) + '</span>' + (p.desc ? ' · ' : '') : ''}${esc(p.desc || '')}</small>${noteIcon}${expiryIcon}
       </td>
       <td class="tdipn hide-sm">${esc(p.IPN || '')}</td>
       <td class="tdcat hide-sm">${esc(cat(p.catId))}</td>
-      <td class="tdloc hide-sm">${esc(loc(p.locId))}</td>
-      <td class="tdq hide-sm" style="text-align:right;font-size:11px;color:var(--text3)">${(() => { const prices = (p.suppliers || []).map(s => s.price).filter(Boolean); return prices.length ? '€' + Math.min(...prices).toFixed(2) : ''; })()} </td>
-      <td class="tdq" onclick="event.stopPropagation()">
-        <span class="${qc}" style="cursor:text" onclick="inlineStockEdit(event,${p.id})" title="Klik om aan te passen">${q}</span>
-      </td>
-      <td class="hide-sm" style="text-align:right;font-size:10px;color:var(--text3);white-space:nowrap">${lastMod}</td>
+      <td class="tdloc">${esc(loc(p.locId))}</td>
+      <td class="tdprice hide-sm" style="text-align:right;font-size:11px;color:var(--text3)">${(() => { const prices = (p.suppliers || []).map(s => s.price).filter(Boolean); return prices.length ? '€' + Math.min(...prices).toFixed(2) : ''; })()} </td>
+      <td class="tdq" onclick="event.stopPropagation()">${qtyHTML(p)}</td>
+      <td class="tdmod hide-sm" style="text-align:right;font-size:10px;color:var(--text3);white-space:nowrap">${lastMod}</td>
       <td class="tda">
-        <button class="abtn" onclick="event.stopPropagation();togglePin(${p.id})" title="${pinned ? 'Losmaken' : 'Vastzetten'}" style="${pinned ? 'color:var(--acc)' : ''}">${pinned ? '📌' : '📍'}</button>
-        ${p.link ? '<button class="abtn" onclick="event.stopPropagation();window.open(\'' + esc(p.link) + '\',\'_blank\')">🔗</button>' : ''}
-        <button class="abtn" onclick="event.stopPropagation();openEdit(${p.id})">✏</button>
-        <button class="abtn del" onclick="event.stopPropagation();delPart(${p.id})">✕</button>
+        <button class="abtn kebab" aria-haspopup="menu" aria-expanded="false" title="Acties" onclick="rowMenu(event,${p.id})">⋯</button>
       </td></tr>`;
       }).join('');
       const active = parts.filter(p => p.active !== false);
@@ -1763,6 +1796,8 @@
         if (warnBadge) warnBadge.textContent = `⚠ ${warnCount} laag`;
       }
       checkExpiryAlerts();
+      updateAlertCenter();
+      renderChips();
       renderCards();
     }
 
@@ -1801,6 +1836,17 @@
     function setF(id) { window._lowStockMode = false; catF = id; document.getElementById('vTitle').textContent = id === null ? 'Alle onderdelen' : (CATS[id] || 'Categorie'); closeSidebar(); renderSidebar(); renderTable(); }
     function sb(k) { if (sortK === k) sortA = !sortA; else { sortK = k; sortA = true; } renderTable(); }
 
+    // ── ZOEKVELD-PLACEHOLDER: korter op smalle schermen ────────────
+    (function () {
+      const mq = window.matchMedia('(max-width: 640px)');
+      const apply = () => {
+        const el = document.getElementById('srch');
+        if (el) el.placeholder = mq.matches ? 'Zoeken…' : 'Zoek naam, IPN, leverancier... ( / )';
+      };
+      apply();
+      (mq.addEventListener ? mq.addEventListener('change', apply) : mq.addListener(apply));
+    })();
+
     // ── SIDEBAR TOGGLE (mobile) ───────────────────────────────────
     function toggleSidebar() {
       const aside = document.getElementById('sidebar');
@@ -1829,22 +1875,18 @@
         <div class="card-sub">${esc(p.IPN || p.desc || '')}</div>
         <div class="card-loc">${esc(loc(p.locId))}</div>
       </div>
-      <div class="card-qty"><span class="${qc}">${q}</span></div>
+      <div class="card-qty">${qtyHTML(p)}</div>
     </div>`;
       }).join('');
     }
 
     function showLowStock() {
-      // Filter to show only parts below minimum stock
-      catF = null;
-      srch = '';
+      // Via de meldingen-knop: toon alleen onderdelen onder het minimum (chip 'Lage voorraad')
+      catF = null; srch = '';
       document.getElementById('srch').value = '';
-      document.getElementById('vTitle').textContent = '⚠ Lage voorraad';
-      // Temporarily override filtered to show only low stock
-      const prev = window._lowStockMode;
-      window._lowStockMode = true;
-      renderSidebar();
-      renderTable();
+      document.getElementById('vTitle').textContent = 'Alle onderdelen';
+      _chips.low = true;
+      renderSidebar(); renderTable();
     }
 
     // ── DETAIL TABS ──────────────────────────────────────────────
@@ -2974,27 +3016,150 @@
       renderLocs(); fillLocParent(); renderTable(); toast('Locatie verwijderd');
     }
 
-    // ── MORE MENU ─────────────────────────────────────────────────
+    // ── MELDINGEN (header) ────────────────────────────────────────
+    function alertCounts() {
+      const active = parts.filter(p => p.active !== false);
+      const low = active.filter(p => p.minStock > 0 && (p.stock || 0) < p.minStock).length;
+      const exp = parts.filter(p => {
+        if (!p.active || !p.expiryDate) return false;
+        const st = getExpiryStatus(p.expiryDate);
+        return st === 'expired' || st === 'critical' || st === 'warning';
+      }).length;
+      const sug = (window._suggestions || []).length;
+      const zero = active.filter(p => (p.stock || 0) === 0).length;
+      return { low, exp, sug, zero };
+    }
+    function updateAlertCenter() {
+      const c = alertCounts();
+      const total = c.low + c.exp + c.sug;
+      const el = document.getElementById('alertCount');
+      if (!el) return;
+      el.hidden = total === 0;
+      el.textContent = total > 99 ? '99+' : total;
+      document.getElementById('alertBtn').title = total ? `${total} melding${total === 1 ? '' : 'en'}` : 'Geen meldingen';
+      if (!document.getElementById('alertPop').hidden) renderAlertPop();
+    }
+    function renderAlertPop() {
+      const c = alertCounts();
+      const row = (key, ic, label, n, cls) =>
+        `<button class="alert-row ${cls}" onclick="alertGo('${key}')"><span class="ic">${ic}</span><span class="lbl">${label}</span><span class="n">${n}</span></button>`;
+      let h = '';
+      if (c.low) h += row('low', '⚠', 'Lage voorraad', c.low, 'is-red');
+      if (c.exp) h += row('exp', '⏰', 'Verloopt binnenkort', c.exp, 'is-orange');
+      if (c.sug) h += row('sug', '💡', 'Suggesties', c.sug, 'is-green');
+      if (!h) h = '<div class="alert-empty">Alles in orde ✓</div>';
+      h += '<div class="alert-sep"></div>';
+      h += row('zero', '∅', window._zeroStockMode ? 'Lege vakken (filter aan)' : 'Lege vakken tonen', c.zero, window._zeroStockMode ? 'is-on' : '');
+      document.getElementById('alertPop').innerHTML = h;
+    }
+    function toggleAlerts(e) {
+      if (e) e.stopPropagation();
+      const pop = document.getElementById('alertPop');
+      const open = pop.hidden;
+      closeMoreMenu();
+      if (open) renderAlertPop();
+      pop.hidden = !open;
+      document.getElementById('alertBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    function closeAlerts() {
+      const pop = document.getElementById('alertPop');
+      if (pop) pop.hidden = true;
+      document.getElementById('alertBtn')?.setAttribute('aria-expanded', 'false');
+    }
+    function alertGo(key) {
+      closeAlerts();
+      if (key === 'low') showLowStock();
+      else if (key === 'exp') showExpiryList();
+      else if (key === 'sug') openSuggestions();
+      else if (key === 'zero') toggleZeroStock();
+    }
+
+    // ── MENU (één definitie voor desktop-dropdown én mobiel menu-blad) ──
+    // ctx: 'm' = alleen mobiel, 'd' = alleen desktop, weglaten = overal
+    const MENU = [
+      { id: 'ov', t: 'Overzichten', ctx: 'm', items: [
+        ['📊', 'Dashboard', 'openDashboard()'], ['📋', 'Bestellen', 'openOrderList()'],
+        ['📜', 'Geschiedenis', 'openHistModal()'], ['📦', 'Archief', 'toggleArchived()']] },
+      { id: 'beheer', t: 'Beheer', items: [
+        ['🗄', 'Kasten', 'openKastModal()'], ['📍', 'Locaties', 'openLocModal()'],
+        ['🗂', 'Categorieën', 'openCatManager()'], ['🏪', 'Leveranciers', 'openSuppModal()'],
+        ['🖼', 'Media', 'openMediaModal()'], ['🔗', 'Projecten / BOM', 'openProjectsModal()'],
+        ['📦', 'Inkooporders', 'openOrdersModal()']] },
+      { id: 'print', t: 'Afdrukken & export', items: [
+        ['🏷', 'Labels printen', 'openPrintModal()'], ['📋', 'Pakbon', 'openPackingSlip()'],
+        ['📦', 'Verpakkingsteller', 'openPackagingCounter()'], ['📤', 'Exporteren', 'openExport()'],
+        ['📊', 'Excel export', 'exportExcel()']] },
+      { id: 'data', t: 'Gegevens', items: [
+        ['📜', 'Geschiedenis', 'openHistModal()', 'd'], ['📥', 'Bulk voorraad import (CSV)', 'bulkStockImportCSV()', 'd'],
+        ['🤖', 'Bulk AI-lookup', 'openBulkAiLookup()'], ['💾', 'Backup downloaden', 'downloadBackup()']] },
+      { id: 'inst', t: 'Instellingen', items: [
+        ['⚙', 'Kolommen instellen', 'openColSettings()', 'd'], ['🔄', 'Auto-refresh', 'openRefreshSettings()'],
+        ['📡', 'Webhook / HA push', 'openWebhookSettings()'], ['🔗', 'Links & deep-links', 'openLinksPanel()'],
+        ['🔒', 'Alleen-lezen', 'toggleReadOnly()', '', 'js-readonly'], ['❓', 'Help & sneltoetsen', 'openHelp()']] },
+    ];
+    function mmOpenId() { try { return localStorage.getItem('hb_menu_open') || 'beheer'; } catch (e) { return 'beheer'; } }
+    function buildMenus() {
+      const open = mmOpenId();
+      const html = (sheet) =>
+        (sheet ? '<div class="mm-grip"></div>' : '') +
+        '<div class="mm-top"><input class="mm-search" type="search" placeholder="Zoek in menu…" autocomplete="off" oninput="mmFilter(this)">' +
+        (sheet ? '<button class="mm-close" onclick="closeMoreMenu()" aria-label="Sluiten">✕</button>' : '') + '</div>' +
+        MENU.map(g => `<div class="mm-group${g.ctx ? ' ctx-' + g.ctx : ''}${g.id === open ? ' open' : ''}" data-g="${g.id}">` +
+          `<button class="mm-ghead" onclick="mmToggle('${g.id}')"><span>${g.t}</span><span class="mm-chev">›</span></button>` +
+          '<div class="mm-items">' + g.items.map(it =>
+            `<div class="mm-item${it[3] ? ' ctx-' + it[3] : ''}${it[4] ? ' ' + it[4] : ''}" role="button" tabindex="0" data-l="${it[1].toLowerCase()}" onclick="${it[2]};closeMoreMenu()">` +
+            `<span class="ic">${it[0]}</span><span class="mm-lbl">${it[1]}</span></div>`).join('') +
+          '</div></div>').join('') +
+        '<div class="mm-empty" hidden>Niets gevonden</div>';
+      document.getElementById('moreMenuDesktop').innerHTML = html(false);
+      document.getElementById('moreSheetPanel').innerHTML = html(true);
+      applyReadOnly();
+    }
+    function mmToggle(id) {
+      const open = mmOpenId() === id ? '' : id;
+      try { localStorage.setItem('hb_menu_open', open || '-'); } catch (e) { }
+      document.querySelectorAll('.mm-group').forEach(g => g.classList.toggle('open', g.dataset.g === open));
+    }
+    function mmFilter(input) {
+      const root = input.closest('.mm');
+      const q = input.value.trim().toLowerCase();
+      const mobile = window.innerWidth <= 640;
+      let any = false;
+      root.classList.toggle('mm-searching', !!q);
+      root.querySelectorAll('.mm-group').forEach(g => {
+        let hits = 0;
+        g.querySelectorAll('.mm-item').forEach(it => {
+          const ctxOk = !(mobile ? it.classList.contains('ctx-d') : it.classList.contains('ctx-m'));
+          const match = ctxOk && (!q || it.dataset.l.includes(q));
+          it.classList.toggle('mm-no', !match);
+          if (match) hits++;
+        });
+        const gCtxOk = !(mobile ? g.classList.contains('ctx-d') : g.classList.contains('ctx-m'));
+        g.classList.toggle('mm-no', !q ? false : (!hits || !gCtxOk));
+        if (q && hits && gCtxOk) any = true;
+      });
+      root.querySelector('.mm-empty').hidden = !q || any;
+    }
     function toggleMoreMenu() {
+      closeAlerts();
       const isMobile = window.innerWidth <= 640;
-      if (isMobile) {
-        const sheet = document.getElementById('moreSheet');
-        sheet.style.display = sheet.style.display === 'none' || !sheet.style.display ? 'block' : 'none';
-      } else {
-        const m = document.getElementById('moreMenuDesktop');
-        m.style.display = m.style.display === 'none' || !m.style.display ? 'block' : 'none';
-      }
+      const el = document.getElementById(isMobile ? 'moreSheet' : 'moreMenuDesktop');
+      const showing = el.style.display === 'block';
+      closeMoreMenu();
+      if (!showing) el.style.display = 'block';
     }
     function closeMoreMenu() {
       document.getElementById('moreMenuDesktop').style.display = 'none';
       document.getElementById('moreSheet').style.display = 'none';
+      document.querySelectorAll('.mm-search').forEach(i => { if (i.value) { i.value = ''; mmFilter(i); } });
     }
     document.addEventListener('click', e => {
       if (!document.getElementById('moreMenuWrap')?.contains(e.target)) {
         document.getElementById('moreMenuDesktop').style.display = 'none';
-        // Don't close sheet here — it has its own overlay
       }
+      if (!document.getElementById('alertWrap')?.contains(e.target)) closeAlerts();
     });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAlerts(); });
 
     // ── DASHBOARD ─────────────────────────────────────────────────
     function openDashboard() {
@@ -5821,6 +5986,7 @@ Toch doorgaan?`
         if (badge) { badge.textContent = `💡 ${suggestions.length}`; }
       }
       window._suggestions = suggestions;
+      updateAlertCenter();
     }
 
     function openSuggestions() {
@@ -5925,8 +6091,10 @@ Toch doorgaan?`
 
     function applyReadOnly() {
       document.body.classList.toggle('readonly', _readOnly);
-      const btn = document.getElementById('readonlyBtn');
-      if (btn) { btn.textContent = _readOnly ? '🔓' : '🔒'; btn.title = _readOnly ? 'Bewerken inschakelen' : 'Alleen-lezen modus'; }
+      document.querySelectorAll('.js-readonly .mm-lbl').forEach(el => {
+        el.textContent = _readOnly ? 'Bewerken inschakelen' : 'Alleen-lezen';
+      });
+      document.querySelectorAll('.js-readonly .ic').forEach(el => { el.textContent = _readOnly ? '🔓' : '🔒'; });
     }
 
     // ── PAKBON GENERATOR ──────────────────────────────────────────
@@ -7029,12 +7197,12 @@ Toch doorgaan?`
     const COL_DEFS = [
       { key: 'img', label: 'Foto', cls: 'tdi', default: true },
       { key: 'name', label: 'Naam', cls: 'tdn', default: true },
-      { key: 'IPN', label: 'IPN', cls: 'tdipn', default: true },
-      { key: 'cat', label: 'Categorie', cls: 'tdcat', default: true },
+      { key: 'IPN', label: 'IPN', cls: 'tdipn', default: false },
+      { key: 'cat', label: 'Categorie', cls: 'tdcat', default: false },
       { key: 'loc', label: 'Locatie', cls: 'tdloc', default: true },
-      { key: 'price', label: 'Prijs', cls: 'tdprice', default: true },
+      { key: 'price', label: 'Prijs', cls: 'tdprice', default: false },
       { key: 'stock', label: 'Voorraad', cls: 'tdq', default: true },
-      { key: 'modified', label: 'Gewijzigd', cls: 'tdmod', default: true },
+      { key: 'modified', label: 'Gewijzigd', cls: 'tdmod', default: false },
     ];
     let _colVis = JSON.parse(localStorage.getItem('hb_col_vis') || 'null') ||
       Object.fromEntries(COL_DEFS.map(c => [c.key, c.default]));
@@ -7046,8 +7214,17 @@ Toch doorgaan?`
         const el = document.createElement('style'); el.id = '_colVisStyle'; document.head.appendChild(el); return el;
       })();
       styleEl.textContent = COL_DEFS.filter(c => !_colVis[c.key])
-        .map(c => `.${c.cls} { display:none !important }`)
+        .map(c => `.${c.cls}, th[data-col="${c.key}"] { display:none !important }`)
         .join('');
+      let dense = false; try { dense = localStorage.getItem('hb_dense') === '1'; } catch (e) { }
+      document.body.classList.toggle('dense', dense);
+    }
+    function resetColVis(btn) {
+      _colVis = Object.fromEntries(COL_DEFS.map(c => [c.key, c.default]));
+      saveColVis();
+      btn.closest('.overlay')?.remove();
+      openColSettings();
+      renderTable();
     }
 
     function openColSettings() {
@@ -7058,7 +7235,13 @@ Toch doorgaan?`
           <input type="checkbox" ${_colVis[c.key] ? 'checked' : ''} onchange="_colVis['${c.key}']=this.checked;saveColVis()"
             style="width:15px;height:15px;cursor:pointer">
           <span style="color:var(--text)">${c.label}</span>
-        </label>`).join('');
+        </label>`).join('') + `
+        <label style="grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:6px 0;border-top:1px solid var(--border)">
+          <input type="checkbox" ${document.body.classList.contains('dense') ? 'checked' : ''}
+            onchange="try{localStorage.setItem('hb_dense',this.checked?'1':'0')}catch(e){};applyColVis()" style="width:15px;height:15px;cursor:pointer">
+          <span style="color:var(--text)">Compacte regels</span>
+        </label>
+        <button class="btn sec" style="grid-column:1/-1" onclick="resetColVis(this)">Standaardweergave herstellen</button>`;
       const dlg = _bulkDialog('⚙ Kolommen instellen', wrap, () => { });
       // Change OK to Sluiten
       const okBtn = dlg.querySelector('.btn:not(.sec)');
@@ -7211,6 +7394,18 @@ Toch doorgaan?`
 
     // ── HELP / CHANGELOG ─────────────────────────────────────────
     const CHANGELOG = [
+      {
+        ver: 'v3.8.0', date: '2026-10', items: [
+          '📱 Beter op telefoon en tablet — categorieën bereikbaar, detail past op het scherm, rekening met notch en home-indicator',
+          '🔔 Eén meldingen-knop — vervangt de losse badges (lage voorraad, verloopt, suggesties, leeg)',
+          '🗂 Opgeschoond menu — inklapbare groepen, zoekveld, dubbele items weg',
+          '➕ Voorraad direct in de rij — −/+ met statusbalk t.o.v. het minimum (ook op telefoon)',
+          '🏷 Snelfilters — lage voorraad, leeg, zonder locatie, vastgezet, verloopt',
+          '⋯ Acties per rij achter één menu, en een compactere bulk-balk met Meer-menu',
+          '▦ Standaard drie kolommen (naam, locatie, voorraad) — rest via Kolommen instellen, met compacte regels',
+          '🛠 Kolomkoppen en cellen verdwijnen nu samen bij prijs en gewijzigd',
+        ]
+      },
       {
         ver: 'v3.7.0', date: '2026-04', items: [
           '⏰ Verloopdatum op onderdelen — badge in tabel, waarschuwing in detail, ⏰-knop in header',
@@ -7540,9 +7735,6 @@ Toch doorgaan?`
       if (e.key === 'z' || e.key === 'Z') toggleZeroStock();
       if (e.key === 'r' || e.key === 'R') openReorderModal();
       if (e.key === 'Escape') {
-        window._zeroStockMode = false; window._lowStockMode = false;
-        const b = document.getElementById('zeroStockBadge');
-        if (b) { b.style.cssText = 'background:var(--surf2);border:1px solid var(--border);color:var(--text2);border-radius:10px;padding:2px 7px;font-size:11px;font-weight:700'; b.textContent = '\u2205 leeg'; }
         closeScannerQuick(); closeReorderModal();
         closeDet(); closePart(); closeLocModal(); closeKastModal(); closeMediaModal(); closeMediaDet(); closeMediaPicker(); closeSuppModal(); closeDashboard(); closeOrderList(); closeExport(); closeMoreMenu(); closeHistModal(); closeProjectsModal(); closeProjEdit(); closeOrdersModal(); closeOrderEdit(); closeHelp();
       }
@@ -7568,22 +7760,15 @@ Toch doorgaan?`
 
     // ── VOORRAAD = 0 FILTER ───────────────────────────────────────
     function toggleZeroStock() {
-      window._zeroStockMode = !window._zeroStockMode;
-      window._lowStockMode = false;
-      catF = null; srch = '';
-      document.getElementById('srch').value = '';
-      const badge = document.getElementById('zeroStockBadge');
-      if (window._zeroStockMode) {
-        const cnt = parts.filter(p => p.active !== false && (p.stock || 0) === 0).length;
-        badge.style.cssText = 'background:var(--orange);color:#fff;border-radius:10px;padding:2px 7px;font-size:11px;font-weight:700';
-        badge.textContent = `∅ ${cnt} leeg`;
-        document.getElementById('vTitle').textContent = `∅ Lege voorraad (${cnt})`;
-      } else {
-        badge.style.cssText = 'background:var(--surf2);border:1px solid var(--border);color:var(--text2);border-radius:10px;padding:2px 7px;font-size:11px;font-weight:700';
-        badge.textContent = '∅ leeg';
+      _chips.zero = !_chips.zero;
+      window._zeroStockMode = _chips.zero;
+      if (_chips.zero) {
+        catF = null; srch = '';
+        document.getElementById('srch').value = '';
         document.getElementById('vTitle').textContent = 'Alle onderdelen';
       }
       renderSidebar(); renderTable();
+      updateAlertCenter();
     }
 
     // ── F2 SNELLE SCANNER ─────────────────────────────────────────
@@ -7719,6 +7904,7 @@ Toch doorgaan?`
 
     // ── INIT ─────────────────────────────────────────────────────
     (async () => {
+      buildMenus();
       await Promise.all([loadAll(), loadServerConfig()]);
       applyColVis();
       renderSidebar();

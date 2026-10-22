@@ -2699,7 +2699,7 @@ aside,
   .mob-nav {
     height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
     padding-bottom: env(safe-area-inset-bottom, 0px);
-    grid-template-columns: repeat(4, 1fr)
+    grid-template-columns: repeat(5, 1fr)
   }
 
   .mob-nav button {
@@ -3703,4 +3703,148 @@ body.dense .qb {
   .card-qty .qcell {
     align-items: stretch
   }
+}
+
+/* ═══════════════════ ONGEDAAN MAKEN + "TOON MEER" ═══════════════════ */
+.undo-toast {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 310;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--acc);
+  border-radius: var(--r);
+  padding: 8px 8px 8px 14px;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  max-width: min(460px, calc(100vw - 40px));
+  transform: translateY(calc(100% + 40px));
+  visibility: hidden;
+  transition: transform .2s ease, visibility 0s linear .2s
+}
+
+.undo-toast.show {
+  transform: none;
+  visibility: visible;
+  transition: transform .2s ease, visibility 0s
+}
+
+.ut-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
+}
+
+.ut-btn {
+  background: var(--acc);
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  font: 600 12px 'Inter', sans-serif;
+  padding: 7px 11px;
+  cursor: pointer;
+  white-space: nowrap
+}
+
+.ut-btn:hover {
+  opacity: .85
+}
+
+@media (pointer: coarse) {
+  .ut-btn {
+    padding: 11px 14px;
+    font-size: 13px
+  }
+}
+
+@media (max-width: 640px) {
+  .undo-toast {
+    left: 12px;
+    right: 12px;
+    max-width: none;
+    bottom: calc(var(--nav-h, 56px) + env(safe-area-inset-bottom, 0px) + 12px)
+  }
+}
+
+.more-row td {
+  text-align: center;
+  padding: 14px
+}
+
+.more-card {
+  padding: 14px;
+  text-align: center
+}
+
+/* ── DETAILPANEEL v2: acties vast bovenin, voorraad met statusbalk, prijs uitklapbaar ── */
+.dmeta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px }
+.dchip {
+  font-size: 11px; line-height: 1.5; padding: 1px 8px; border-radius: 999px;
+  background: var(--surf2); border: 1px solid var(--border); color: var(--text2);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap
+}
+.dchip.mono { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--text) }
+.dchip.warn { color: var(--orange, #f59e0b); border-color: currentColor }
+.dacts { display: flex; gap: 6px; margin-top: 10px }
+.dacts .btn { flex: 1; font-size: 12px; padding: 6px 8px; white-space: nowrap }
+.dacts .btn.dmore { flex: 0 0 auto; padding: 6px 12px; font-size: 15px; line-height: 1 }
+.dstock { flex-wrap: wrap; row-gap: 8px }
+.dsnum { min-width: 92px }
+.dbar .sbar { width: 84px; margin-top: 7px }
+.dmin { font-size: 10.5px; color: var(--text2); margin-top: 4px }
+.dmin .dlow { color: var(--red); font-weight: 600 }
+.dmin .dnomin { color: var(--text3) }
+.dpricetoggle {
+  flex: 1 0 100%; background: none; border: none; text-align: left; padding: 0;
+  font-size: 11.5px; color: var(--text2); cursor: pointer
+}
+.dpricetoggle:hover { color: var(--acc) }
+#adjPriceRow { flex: 1 0 100%; margin: 0 -16px -10px; flex-wrap: wrap }
+@media (max-width: 640px) {
+  .dacts .btn { padding: 9px 8px; font-size: 13px }
+  .dpricetoggle { padding: 4px 0 }
+  .dtab { padding: 10px 12px; font-size: 12px }
+}
+
+/* ── SCANNER-VENSTER ── */
+.scan-modal { width: 440px; max-width: 100% }
+.scan-modal .mbdy { display: flex; flex-direction: column; gap: 10px }
+.scan-modes { display: flex; gap: 4px; background: var(--surf2); border: 1px solid var(--border); border-radius: var(--r); padding: 4px }
+.scan-modes button { flex: 1; background: none; border: none; border-radius: 4px; color: var(--text2); font-size: 12px; padding: 8px 4px; cursor: pointer; font-family: inherit }
+.scan-modes button.on { background: var(--acc); color: #000; font-weight: 600 }
+.scan-desc { font-size: 12px; color: var(--text2); margin: 0 }
+.scan-modal .qr-video { max-height: 38vh; min-height: 140px }
+.scan-modal .qr-result { margin-top: 0 }
+.scan-manual { display: flex; gap: 6px }
+.scan-manual input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 14px; padding: 8px 10px; outline: none }
+.scan-manual input:focus { border-color: var(--acc) }
+.scan-btns { display: flex; gap: 8px }
+.scan-btns .btn { flex: 1; font-size: 12px }
+.scan-log { font-size: 11.5px; color: var(--text2); max-height: 96px; overflow-y: auto }
+@media (max-width: 640px) { .scan-modal .qr-video { max-height: 32vh } }
+
+/* ── SWIPE-ACTIES (kaarten) ── */
+.card-row { position: relative; overflow: hidden; flex-shrink: 0; border-bottom: 1px solid var(--border) }
+.card-row .card { position: relative; z-index: 1; touch-action: pan-y; border-bottom: none; background: var(--surf) }
+.card-row .card.sel { background: linear-gradient(#f0c04010, #f0c04010), var(--surf) }
+.card-swipe { position: absolute; top: 0; right: 0; bottom: 0; width: 132px; display: flex; z-index: 0 }
+.card-swipe button { flex: 1; border: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 18px; cursor: pointer; font-family: inherit; color: #000 }
+.card-swipe button span { font-size: 11px; font-weight: 600 }
+.card-swipe .sw-edit { background: var(--acc) }
+.card-swipe .sw-more { background: var(--surf3, #3a3f4b); color: var(--text) }
+@media (min-width: 641px) { .card-swipe { display: none } }
+
+/* ── TOEGANKELIJKHEID ── */
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px }
+.modal:focus, .modal:focus-visible { outline: none }
+tbody tr:focus-visible, .card:focus-visible { outline-offset: -2px }
+mark.hl { background: rgba(240, 192, 64, .32); color: inherit; border-radius: 2px; padding: 0 1px }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important }
 }

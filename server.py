@@ -319,6 +319,9 @@ def icon512(): return send_file('static/icon-512.png', mimetype='image/png')
 @app.route('/app.css')
 def appcss(): return send_file('static/app.css', mimetype='text/css; charset=utf-8')
 
+@app.route('/app.js')
+def appjs(): return send_file('static/app.js', mimetype='text/javascript')
+
 @app.route('/fonts/<path:filename>')
 def fonts(filename): return send_from_directory('static/fonts', filename)
 

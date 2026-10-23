@@ -143,6 +143,13 @@ De keuze wordt in je browser onthouden.
 
 </details>
 
+## Beheer, back-ups en import/export
+
+Onder **Menu → Beheer → Beheer & gezondheid** vind je een dashboard met databasegrootte, schijfruimte, laatste/volgende backup en
+integriteitsstatus, een controle met herstelacties, back-ups (met retentie en terugzetten met verificatie), import/export
+(CSV, Excel, JSON met voorbeeld vóór het opslaan), media-opruiming en het logboek. Zie [docs/ADMIN.md](docs/ADMIN.md).
+Nieuwe optionele instellingen staan in `.env.example`.
+
 ## Sneltoetsen
 
 Sneltoetsen werken zolang je niet in een invoerveld typt. Een overzicht vind

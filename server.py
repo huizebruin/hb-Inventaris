@@ -606,12 +606,17 @@ def migrate_parts():
     return jsonify({'ok':True})
 
 # ── API: AI LOOKUP (Gemini) ──────────────────────────────────────
+def _ai_fail(msg, status):
+    """Gemini-fouten komen in het logboek (categorie ai) en worden zichtbaar in Beheer."""
+    log_event('ai', 'warning' if status in (400, 429) else 'error', f'Gemini-aanroep mislukt ({status}): {msg}'[:400])
+    return None, ({'error': msg}, status)
+
 def _call_gemini(prompt, max_tokens=2000, thinking_level='low', image_b64=None, image_mime=None):
     """Roept Gemini generateContent aan en parsed het JSON-antwoord.
     Retourneert (parsed_dict, None) bij succes, of (None, (error_dict, status_code)) bij fout.
     Geef image_b64/image_mime mee voor een multimodale (foto) aanvraag."""
     if not GEMINI_API_KEY:
-        return None, ({'error': 'Geen GEMINI_API_KEY ingesteld in data/.env'}, 400)
+        return _ai_fail('Geen GEMINI_API_KEY ingesteld in data/.env', 400)
 
     content_parts = []
     if image_b64:
@@ -640,30 +645,30 @@ def _call_gemini(prompt, max_tokens=2000, thinking_level='low', image_b64=None, 
                 msg = 'Dagelijkse gratis limiet van Gemini bereikt. Probeer het morgen opnieuw, of zet billing aan op je Google AI Studio-project om deze limiet te verhogen.'
             else:
                 msg = 'Gemini-limiet (rate limit) even bereikt. Wacht een minuutje en probeer het opnieuw.'
-            return None, ({'error': msg}, 429)
+            return _ai_fail(msg, 429)
         if e.code == 404:
             msg = f'Model "{GEMINI_MODEL}" niet gevonden of niet meer beschikbaar. Zet GEMINI_MODEL in je .env op een geldig model.'
-            return None, ({'error': msg}, 502)
+            return _ai_fail(msg, 502)
         if e.code in (401, 403):
             msg = 'Gemini API-key ongeldig of geen toegang. Controleer GEMINI_API_KEY in je .env.'
-            return None, ({'error': msg}, 502)
-        return None, ({'error': f'Gemini API fout ({e.code}): {detail[:300]}'}, 502)
+            return _ai_fail(msg, 502)
+        return _ai_fail(f'Gemini API fout ({e.code}): {detail[:300]}', 502)
     except Exception as e:
-        return None, ({'error': f'Gemini API onbereikbaar: {e}'}, 502)
+        return _ai_fail(f'Gemini API onbereikbaar: {e}', 502)
 
     candidates = data.get('candidates') or []
     if not candidates:
-        return None, ({'error': f'Gemini gaf geen resultaat terug: {data}'}, 502)
+        return _ai_fail(f'Gemini gaf geen resultaat terug: {data}', 502)
     finish_reason = candidates[0].get('finishReason', '')
     parts_out = candidates[0].get('content', {}).get('parts', [])
     text = ''.join(p.get('text', '') for p in parts_out).strip()
     if not text:
-        return None, ({'error': f'Gemini gaf een leeg antwoord (finishReason: {finish_reason})'}, 502)
+        return _ai_fail(f'Gemini gaf een leeg antwoord (finishReason: {finish_reason})', 502)
     text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text.strip())
     try:
         return json.loads(text), None
     except json.JSONDecodeError as e:
-        return None, ({'error': f'Kon Gemini-antwoord niet verwerken (mogelijk afgekapt): {e}'}, 502)
+        return _ai_fail(f'Kon Gemini-antwoord niet verwerken (mogelijk afgekapt): {e}', 502)
 
 
 @app.route('/api/ai/lookup', methods=['POST'])

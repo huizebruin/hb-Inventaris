@@ -230,9 +230,14 @@ let _pinned = new Set(JSON.parse(localStorage.getItem('hb_pinned') || '[]'));
 
 // ── API ──────────────────────────────────────────────────────
 async function api(path, method = 'GET', body = null) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  let tok = ''; try { tok = sessionStorage.getItem('hb_admin_token') || ''; } catch (e) { }
+  const opts = { method, headers: { 'Content-Type': 'application/json', ...(tok ? { 'X-Admin-Token': tok } : {}) } };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(path, opts);
+  if (r.status === 401) {   // server heeft HB_ADMIN_TOKEN ingesteld: eenmalig om het token vragen
+    const t = prompt('Beheer-token (HB_ADMIN_TOKEN):');
+    if (t) { try { sessionStorage.setItem('hb_admin_token', t); } catch (e) { } return api(path, method, body); }
+  }
   if (!r.ok) {
     const raw = await r.text();
     try { throw new Error(JSON.parse(raw).error || raw); }
@@ -296,33 +301,65 @@ function loc(id) { return id != null ? LOCS[String(id)] || LOCS[id] || '—' : '
 // ── TABLE ────────────────────────────────────────────────────
 let _showArchived = false;
 
-// ── FUZZY ZOEKEN ─────────────────────────────────────────────
-function fuzzyScore(str, q) {
-  str = str.toLowerCase(); q = q.toLowerCase();
-  if (!str || !q) return 0;
-  if (str === q) return 1000;
-  if (str.startsWith(q)) return 900;
-  if (str.includes(q)) return 800;
-  const words = q.split(/\s+/).filter(Boolean);
-  if (words.length > 1 && words.every(w => str.includes(w))) return 700;
-  let qi = 0;
-  for (let i = 0; i < str.length && qi < q.length; i++) { if (str[i] === q[qi]) qi++; }
-  if (qi === q.length) return Math.round(500 * (qi / str.length));
+// ── ZOEKEN ────────────────────────────────────────────────────
+// Elk zoekwoord moet ergens voorkomen (EN), de beste treffers staan bovenaan. Een treffer aan het
+// begin van een woord telt zwaarder dan ergens middenin, naam/IPN zwaarder dan omschrijving/notities.
+// Losse-letters-matching ("e-s-p-3-2" verspreid over een lange tekst) is bewust beperkt tot naam/IPN
+// en tot compacte treffers, anders matcht bijna alles en moet je door de hele lijst heen.
+const _srchNorm = s => String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const _srchWords = s => s.split(/[^a-z0-9\u00b5\u03a9\u03c9]+/).filter(Boolean);
+
+function _tokScore(f, tok) {
+  // f = {s: genormaliseerde tekst, w: woorden}
+  if (!f.s) return 0;
+  if (f.w.includes(tok)) return 100;                         // heel woord
+  if (f.w.some(w => w.startsWith(tok))) return 80;           // begin van een woord
+  if (f.s.includes(tok)) return 50;                          // ergens in
+  return 0;
+}
+function _subseq(s, q) {
+  // alle letters van q in volgorde in s, maar compact (max. span = 1.5 x lengte + 1)
+  if (q.length < 3 || q.length > s.length) return 0;
+  const max = Math.floor(q.length * 1.5) + 1;
+  for (let st = s.indexOf(q[0]); st !== -1; st = s.indexOf(q[0], st + 1)) {
+    let qi = 1, i = st + 1;
+    while (qi < q.length && i < s.length && i - st < max) { if (s[i] === q[qi]) qi++; i++; }
+    if (qi === q.length) return 25;
+  }
   return 0;
 }
 
-function fuzzyMatch(p, q) {
-  const scores = [
-    fuzzyScore(p.name, q) * 3,
-    fuzzyScore(p.IPN || '', q) * 2,
-    fuzzyScore(p.desc || '', q),
-    fuzzyScore(cat(p.catId), q) * 0.5,
-    fuzzyScore(loc(p.locId), q) * 0.5,
-    fuzzyScore(p.notes || '', q) * 0.3,
-    ...(p.tags || []).map(t => fuzzyScore(t, q)),
-    ...(p.suppliers || []).map(s => fuzzyScore(suppById(s.suppId)?.name || '', q)),
-  ];
-  return Math.max(...scores);
+const _SRCH_FIELDS = [['name', 10], ['IPN', 8], ['tags', 5], ['desc', 3], ['cat', 2], ['loc', 2], ['supp', 2], ['notes', 1]];
+function _srchIndex(p) {
+  const mk = t => { const s = _srchNorm(t); return { s, w: _srchWords(s) }; };
+  return {
+    name: mk(p.name), IPN: mk(p.IPN), tags: mk((p.tags || []).join(' ')), desc: mk(p.desc),
+    cat: mk(cat(p.catId)), loc: mk(loc(p.locId)), notes: mk(p.notes),
+    supp: mk((p.suppliers || []).map(s => suppById(s.suppId)?.name || '').join(' '))
+  };
+}
+// Geeft 0 terug als het onderdeel niet voldoet (elk zoekwoord moet matchen), anders een score
+function fuzzyMatch(p, q, toks) {
+  toks = toks || _srchNorm(q).trim().split(/\s+/).filter(Boolean);
+  if (!toks.length) return 0;
+  const ix = _srchIndex(p);
+  let total = 0;
+  for (const tok of toks) {
+    let best = 0;
+    for (const [k, wgt] of _SRCH_FIELDS) {
+      let sc = _tokScore(ix[k], tok);
+      if (!sc && (k === 'name' || k === 'IPN') && toks.length === 1) sc = _subseq(ix[k].s.replace(/[^a-z0-9]/g, ''), tok);
+      best = Math.max(best, sc * wgt);
+    }
+    if (!best) return 0;
+    total += best;
+  }
+  const full = toks.join(' ');
+  if (ix.name.s === full || ix.IPN.s === full) total += 5000;          // exacte treffer
+  else if (ix.name.s.startsWith(full) || ix.IPN.s.startsWith(full)) total += 1500;
+  else if (ix.name.s.includes(full)) total += 600;
+  if (toks.length > 1 && toks.every(t => ix.name.s.includes(t))) total += 400;
+  return total;
 }
 
 // ── SNELFILTERS (chips) ───────────────────────────────────────
@@ -380,8 +417,9 @@ function filtered(opts = {}) {
       const tag = q.slice(1);
       l = l.filter(p => (p.tags || []).some(t => t.includes(tag)));
     } else {
-      const scored = l.map(p => ({ p, score: fuzzyMatch(p, q) })).filter(x => x.score > 0);
-      scored.sort((a, b) => b.score - a.score);
+      const toks = _srchNorm(q).trim().split(/\s+/).filter(Boolean);
+      const scored = l.map(p => ({ p, score: fuzzyMatch(p, q, toks) })).filter(x => x.score > 0);
+      window._srchScore = new Map(scored.map(x => [x.p.id, x.score]));
       l = scored.map(x => x.p);
     }
   } else {
@@ -400,7 +438,14 @@ function filtered(opts = {}) {
   if (opts.noChips) return l;
   window._lastBase = l;
   CHIP_DEFS.forEach(c => { if (_chips[c.k]) l = l.filter(c.test); });
+  // Tijdens zoeken bepaalt relevantie de volgorde (tenzij je bewust op een andere kolom sorteert)
+  const byRelevance = srch.trim() && !srch.trim().startsWith('#') && sortK === 'name' && sortA && window._srchScore;
   l.sort((a, b) => {
+    if (byRelevance) {
+      const d = (window._srchScore.get(b.id) || 0) - (window._srchScore.get(a.id) || 0);
+      if (d) return d;
+      return (a.name || '').localeCompare(b.name || '', 'nl');
+    }
     // Pinned always first
     const ap = _pinned.has(a.id) ? 0 : 1, bp = _pinned.has(b.id) ? 0 : 1;
     if (ap !== bp) return ap - bp;
@@ -1997,7 +2042,7 @@ const MENU = [
     ['📜', 'Geschiedenis', 'openHistModal()'], ['📦', 'Archief', 'toggleArchived()']] },
   { id: 'beheer', t: 'Beheer', items: [
     ['🗄', 'Kasten', 'openKastModal()'], ['📍', 'Locaties', 'openLocModal()'], ['📷', 'Scanner (camera)', 'openScanOvl()', 'd'],
-    ['🗂', 'Categorieën', 'openCatManager()'], ['🏪', 'Leveranciers', 'openSuppModal()'],
+    ['🩺', 'Beheer & gezondheid', 'openAdmin()'], ['🗂', 'Categorieën', 'openCatManager()'], ['🏪', 'Leveranciers', 'openSuppModal()'],
     ['🖼', 'Media', 'openMediaModal()'], ['🔗', 'Projecten / BOM', 'openProjectsModal()'],
     ['📦', 'Inkooporders', 'openOrdersModal()']] },
   { id: 'print', t: 'Afdrukken & export', items: [
@@ -2836,7 +2881,10 @@ async function deleteMediaFile() {
 }
 
 async function deleteOrphans() {
-  if (!confirm('Verwijder alle bestanden die niet meer aan een onderdeel gekoppeld zijn?')) return;
+  const pre = await api('/api/media/orphans');
+  if (!pre.count) { toast(pre.skipped_recent.length ? `Niets te verwijderen (${pre.skipped_recent.length} recent geüpload, wacht ${pre.grace_min} min)` : 'Geen ongebruikte bestanden'); return; }
+  const list = pre.files.slice(0, 15).map(f => '• ' + f.name + ' (' + formatSize(f.size) + ')').join('\n') + (pre.count > 15 ? `\n… en ${pre.count - 15} meer` : '');
+  if (!confirm(`${pre.count} ongebruikte bestanden (${formatSize(pre.size)}) verwijderen?\n\n${list}`)) return;
   const r = await api('/api/media/orphans', 'DELETE');
   toast(`🗑 ${r.count} bestand${r.count === 1 ? '' : 'en'} verwijderd`);
   await loadMedia();
@@ -6657,14 +6705,21 @@ document.getElementById('srch').addEventListener('input', e => {
     ? `Zoeken in alle onderdelen: "${srch}"`
     : (catF !== null ? (CATS[catF] || 'Categorie') : 'Alle onderdelen');
   clearTimeout(window._srchT);
-  const go = () => { renderSidebar(); renderTable(); };
+  const go = () => {
+    renderSidebar(); renderTable();
+    if (srch.trim()) { const n = (window._lastBase || []).length; document.getElementById('vTitle').textContent = `Zoeken in alle onderdelen: "${srch}" · ${n} ${n === 1 ? 'resultaat' : 'resultaten'}`; }
+  };
   if (parts.length > 500) window._srchT = setTimeout(go, 120); else go();
   showSearchHistory();
 });
 document.getElementById('srch').addEventListener('focus', showSearchHistory);
 document.getElementById('srch').addEventListener('blur', () => setTimeout(() => document.getElementById('srchHistory').style.display = 'none', 150));
 document.getElementById('srch').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && srch.trim()) addSearchHistory(srch.trim());
+  if (e.key === 'Enter' && srch.trim()) {
+    addSearchHistory(srch.trim());
+    const res = filtered();
+    if (res.length === 1) { selPart(res[0].id); e.target.blur(); }   // één treffer: meteen openen
+  }
 });
 document.addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;

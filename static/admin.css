@@ -1,0 +1,39 @@
+/* Beheer & gezondheid — hergebruikt de variabelen en .overlay/.modal van app.css */
+#adminOvl .modal { width: min(1020px, 98vw); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden }
+#adminOvl .adm-tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0 }
+#adminOvl .adm-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text2); padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap }
+#adminOvl .adm-tab.on { color: var(--acc); border-bottom-color: var(--acc); font-weight: 600 }
+#adminOvl .adm-body { padding: 16px; overflow-y: auto; flex: 1 }
+.adm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin-bottom: 14px }
+.adm-card { background: var(--surf2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0 }
+.adm-card .l { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .05em }
+.adm-card .v { font-size: 17px; font-weight: 700; margin-top: 2px; overflow-wrap: anywhere }
+.adm-card .s { font-size: 11px; color: var(--text2); margin-top: 2px }
+.adm-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--surf2); border: 1px solid var(--border); color: var(--text2) }
+.adm-badge.ok, .adm-card.ok .v { color: var(--green) } .adm-badge.ok { border-color: var(--green) }
+.adm-badge.warning, .adm-card.warning .v { color: var(--orange) } .adm-badge.warning { border-color: var(--orange) }
+.adm-badge.error, .adm-card.error .v { color: var(--red) } .adm-badge.error { border-color: var(--red) }
+.adm-badge.info { color: var(--text2) }
+.adm-h { font-size: 13px; font-weight: 700; margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
+.adm-bar { height: 8px; border-radius: 4px; background: var(--surf2); overflow: hidden; border: 1px solid var(--border) }
+.adm-bar i { display: block; height: 100%; background: var(--green) } .adm-bar.warning i { background: var(--orange) } .adm-bar.critical i { background: var(--red) }
+.adm-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; flex-wrap: wrap }
+.adm-row .grow { flex: 1; min-width: 160px }
+.adm-row .mono { font-family: 'JetBrains Mono', monospace }
+.adm-issue { border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--surf) }
+.adm-issue.error { border-left-color: var(--red) } .adm-issue.warning { border-left-color: var(--orange) } .adm-issue.info { border-left-color: var(--text3) }
+.adm-issue .t { font-weight: 600; font-size: 13px } .adm-issue .d { font-size: 12px; color: var(--text2); margin-top: 3px }
+.adm-issue .acts { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap }
+.adm-items { margin-top: 8px; max-height: 180px; overflow: auto; font-size: 12px; background: var(--surf2); border-radius: 6px; padding: 6px 8px }
+.adm-items div { padding: 2px 0; overflow-wrap: anywhere } .adm-items a { color: var(--acc); cursor: pointer }
+.adm-ok { text-align: center; padding: 28px; color: var(--green); font-weight: 600 }
+.adm-note { font-size: 12px; color: var(--text2); background: var(--surf2); border-radius: 8px; padding: 8px 10px; margin: 8px 0 }
+.adm-tbl { width: 100%; border-collapse: collapse; font-size: 12px } .adm-tbl th, .adm-tbl td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere }
+.adm-tbl th { color: var(--text3); font-weight: 600; font-size: 11px }
+.adm-log { font-family: 'JetBrains Mono', monospace; font-size: 11px }
+.adm-log .ERROR, .adm-log .CRITICAL { color: var(--red) } .adm-log .WARNING { color: var(--orange) }
+.adm-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px } .adm-filters select, .adm-filters input { background: var(--surf2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px }
+.adm-drop { border: 2px dashed var(--border); border-radius: 10px; padding: 18px; text-align: center; color: var(--text2); font-size: 13px }
+#adminOvl .btn.sm { font-size: 12px; padding: 4px 10px }
+#adminOvl .btn.danger { background: var(--red); color: #fff; border-color: var(--red) }
+@media (max-width: 640px) { #adminOvl .modal { max-height: 100vh; width: 100vw; border-radius: 0 } .adm-grid { grid-template-columns: 1fr 1fr } }

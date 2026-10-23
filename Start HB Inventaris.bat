@@ -19,11 +19,11 @@ if errorlevel 1 (
 
 REM --- Eerste keer: benodigdheden installeren (daarna overgeslagen, sneller opstarten) ---
 if not exist "data" mkdir data
-if not exist "data\.setup_done" (
+if not exist "data\.setup_v2" (
     echo Eenmalig instellen, dit duurt even...
     python -m pip install --quiet --upgrade pip
-    python -m pip install --quiet flask werkzeug
-    echo klaar > "data\.setup_done"
+    python -m pip install --quiet -r requirements.txt
+    echo klaar > "data\.setup_v2"
 )
 
 REM --- Server starten in eigen venster, browser openen zodra hij klaar staat ---

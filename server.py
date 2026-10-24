@@ -1968,6 +1968,138 @@ def backup_status():
             'scheduler_running': BACKUP_STATE['scheduler'],
             'retention': {'days': BACKUP_RETENTION_DAYS, 'keep_min': BACKUP_KEEP_MIN}}
 
+# ── E-MAILMELDINGEN (optioneel) ───────────────────────────────
+# Server-side, dus onafhankelijk van een open browser. Instellen in .env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+# en HB_EMAIL (ontvanger, meerdere gescheiden door komma). Zonder deze waarden gebeurt er niets.
+SMTP_HOST   = os.environ.get('SMTP_HOST', '').strip()
+SMTP_PORT   = int(os.environ.get('SMTP_PORT', '587') or 587)
+SMTP_USER   = os.environ.get('SMTP_USER', '').strip()
+SMTP_PASS   = os.environ.get('SMTP_PASS', '')
+SMTP_FROM   = os.environ.get('SMTP_FROM', '').strip() or SMTP_USER
+MAIL_TO     = [a.strip() for a in re.split(r'[,;]', os.environ.get('HB_EMAIL', '')) if a.strip()]
+MAIL_DIGEST_TIME = os.environ.get('HB_MAIL_DIGEST_TIME', '08:00').strip()      # dagelijks overzicht; leeg = uit
+MAIL_EXPIRY_DAYS = int(os.environ.get('HB_MAIL_EXPIRY_DAYS', '14') or 14)       # verloop binnen zoveel dagen melden
+MAIL_ALERTS      = os.environ.get('HB_MAIL_ALERTS', '1').strip() not in ('0', 'false', 'no', '')   # directe melding bij mislukte backup
+_MAIL_SENT = {}     # dedupe-sleutel -> tijdstip, zodat dezelfde waarschuwing niet steeds opnieuw wordt gestuurd
+MAIL_STATE = {'last_ok': None, 'last_error': None, 'last_error_at': None}
+
+def mail_configured():
+    return bool(SMTP_HOST and MAIL_TO and SMTP_FROM)
+
+def send_mail(subject, body, dedupe_key=None, dedupe_hours=24, html=None):
+    """Verstuurt een e-mail. Gooit een Exception bij falen (de aanroeper beslist wat te doen). Geeft True terug bij succes."""
+    if not mail_configured(): raise RuntimeError('E-mail is niet ingesteld (SMTP_HOST, SMTP_USER en HB_EMAIL ontbreken)')
+    if dedupe_key:
+        last = _MAIL_SENT.get(dedupe_key)
+        if last and time.time() - last < dedupe_hours * 3600: return False
+    import smtplib, ssl
+    from email.message import EmailMessage
+    from email.utils import formatdate, make_msgid
+    msg = EmailMessage()
+    msg['Subject'] = f'[HB Inventaris] {subject}'
+    msg['From'] = SMTP_FROM
+    msg['To'] = ', '.join(MAIL_TO)
+    msg['Date'] = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain='hb-inventaris.local')
+    msg.set_content(body)
+    if html: msg.add_alternative(html, subtype='html')
+    ctx = ssl.create_default_context()
+    try:
+        if SMTP_PORT == 465:
+            srv = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20, context=ctx)
+        else:
+            srv = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
+            srv.ehlo()
+            if srv.has_extn('starttls'):
+                srv.starttls(context=ctx); srv.ehlo()
+        with srv:
+            if SMTP_USER and SMTP_PASS: srv.login(SMTP_USER, SMTP_PASS)
+            srv.send_message(msg)
+    except Exception as e:
+        MAIL_STATE.update(last_error=str(e)[:300], last_error_at=datetime.now().isoformat(timespec='seconds'))
+        log_event('mail', 'error', f'E-mail versturen mislukt: {e}', onderwerp=subject)
+        raise
+    MAIL_STATE['last_ok'] = datetime.now().isoformat(timespec='seconds')
+    if dedupe_key: _MAIL_SENT[dedupe_key] = time.time()
+    log_event('mail', 'info', f'E-mail verstuurd: {subject}', ontvangers=len(MAIL_TO))
+    return True
+
+def send_mail_async(subject, body, **kw):
+    """Voor meldingen die de aanvrager niet mogen ophouden of laten falen."""
+    def run():
+        try: send_mail(subject, body, **kw)
+        except Exception: pass     # staat al in het logboek
+    threading.Thread(target=run, daemon=True, name='hb-mail').start()
+
+def build_digest():
+    """Verzamelt wat aandacht nodig heeft. Geeft (onderwerp, tekst, html) of None als er niets te melden is."""
+    today = datetime.now().date()
+    limit = (today + timedelta(days=MAIL_EXPIRY_DAYS)).isoformat()
+    with db_conn() as db:
+        low = db.execute("SELECT id,name,stock,minStock FROM parts WHERE active=1 AND minStock>0 AND COALESCE(stock,0)<minStock ORDER BY name").fetchall()
+        exp = db.execute("SELECT id,name,expiryDate FROM parts WHERE active=1 AND expiryDate IS NOT NULL AND expiryDate!='' AND expiryDate<=? ORDER BY expiryDate", (limit,)).fetchall()
+    health = full_health(include_media=False)
+    probs = [i for i in health['issues'] if i['severity'] in ('error', 'warning')]
+    if not (low or exp or probs): return None
+    parts_t, parts_h = [], []
+    def sect(title, lines):
+        parts_t.append(title + '\n' + '\n'.join('  - ' + l for l in lines))
+        parts_h.append(f'<h3 style="margin:16px 0 6px">{title}</h3><ul style="margin:0;padding-left:20px">' + ''.join(f'<li>{_esc(l)}</li>' for l in lines) + '</ul>')
+    if probs: sect(f'Systeem ({len(probs)})', [f'{"FOUT" if i["severity"] == "error" else "Let op"}: {i["title"]}' for i in probs])
+    if low: sect(f'Lage voorraad ({len(low)})', [f'{r["name"]}: {r["stock"] or 0} (minimaal {r["minStock"]})' for r in low])
+    if exp:
+        def lab(d):
+            try: n = (datetime.fromisoformat(d).date() - today).days
+            except ValueError: return d
+            return 'verlopen' if n < 0 else 'verloopt vandaag' if n == 0 else f'verloopt over {n} dagen ({d})'
+        sect(f'Verloopdatum ({len(exp)})', [f'{r["name"]}: {lab(r["expiryDate"])}' for r in exp])
+    bits = [x for x in (f'{len(probs)} systeemmelding(en)' if probs else '', f'{len(low)} lage voorraad' if low else '', f'{len(exp)} verloopt' if exp else '') if x]
+    subject = 'Overzicht: ' + ', '.join(bits)
+    text = f'Overzicht van {today:%d-%m-%Y}\n\n' + '\n\n'.join(parts_t) + '\n\nBeheer: Menu → Beheer & gezondheid.'
+    html = '<div style="font-family:system-ui,sans-serif;font-size:14px">' + f'<h2 style="margin:0">Overzicht {today:%d-%m-%Y}</h2>' + ''.join(parts_h) + '<p style="color:#666;margin-top:20px">Beheer: Menu → Beheer &amp; gezondheid.</p></div>'
+    return subject, text, html
+
+def _esc(t):
+    return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+def send_digest(force=False):
+    d = build_digest()
+    if not d:
+        if force: send_mail('Overzicht: alles in orde', 'Er is niets dat aandacht nodig heeft: voorraad, verloopdatums en systeem zijn in orde.')
+        return bool(force)
+    return send_mail(d[0], d[1], html=d[2])
+
+def next_digest_time(now=None):
+    now = now or datetime.now()
+    try: hh, mm = [int(x) for x in MAIL_DIGEST_TIME.split(':')[:2]]
+    except Exception: return None
+    nxt = now.replace(hour=min(max(hh, 0), 23), minute=min(max(mm, 0), 59), second=0, microsecond=0)
+    if nxt <= now: nxt += timedelta(days=1)
+    return nxt
+
+def mail_digest_loop():
+    while not BACKUP_STOP.is_set():
+        nxt = next_digest_time()
+        if nxt is None: return
+        if BACKUP_STOP.wait(max(1.0, (nxt - datetime.now()).total_seconds())): return
+        try: send_digest()
+        except Exception: pass     # al gelogd; volgende poging morgen
+        BACKUP_STOP.wait(60)
+
+@app.route('/api/admin/mail/test', methods=['POST'])
+@admin_required
+def mail_test():
+    """Stuurt direct een testbericht of, met {"digest": true}, het dagelijkse overzicht (ook als er niets te melden is)."""
+    if not mail_configured():
+        return jsonify({'error': 'E-mail is niet ingesteld. Zet SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS en HB_EMAIL in .env en start opnieuw.'}), 400
+    body = request.get_json(silent=True) or {}
+    try:
+        if body.get('digest'): send_digest(force=True)
+        else: send_mail('Testbericht', 'Dit is een testbericht van HB Inventaris. E-mailmeldingen werken.')
+    except Exception as e:
+        return jsonify({'error': f'Versturen mislukt: {e}'}), 502
+    return jsonify({'ok': True, 'to': MAIL_TO})
+
 def auto_backup():
     """Achtergrondtaak: dagelijks op HB_BACKUP_TIME een backup. Mist de server die tijd (uit, herstart),
     dan wordt kort na het opstarten alsnog een backup gemaakt als de laatste ouder is dan 24 uur."""
@@ -1987,7 +2119,9 @@ def auto_backup():
             for attempt in range(3):    # bij een fout: 15 minuten later opnieuw, max 3 pogingen
                 try:
                     do_backup(); break
-                except Exception:
+                except Exception as e:
+                    if attempt == 2 and MAIL_ALERTS and mail_configured():
+                        send_mail_async('Automatische backup mislukt', f'De dagelijkse backup is na 3 pogingen mislukt:\n\n{e}\n\nControleer schijfruimte en rechten via Menu → Beheer & gezondheid.', dedupe_key='backup_failed', dedupe_hours=12)
                     if BACKUP_STOP.wait(900): return
             BACKUP_STOP.wait(60)
     finally:
@@ -2525,6 +2659,7 @@ def system_info():
             'python': platform.python_version(), 'platform': platform.platform(), 'flask': importlib_metadata_version('flask'),
             'sqlite': sqlite3.sqlite_version, 'pillow': _has_module('PIL'), 'openpyxl': _has_module('openpyxl'),
             'gemini_configured': bool(GEMINI_API_KEY), 'telegram_configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
+            'mail_configured': mail_configured(), 'mail_digest_time': MAIL_DIGEST_TIME if mail_configured() else '', 'mail_last_ok': MAIL_STATE['last_ok'], 'mail_last_error': MAIL_STATE['last_error'],
             'admin_token_required': bool(ADMIN_TOKEN), 'auth_enabled': auth_enabled(),
             'settings': {'backup_time': BACKUP_TIME, 'backup_retention_days': BACKUP_RETENTION_DAYS, 'backup_keep_min': BACKUP_KEEP_MIN,
                          'backup_stale_hours': BACKUP_STALE_HOURS, 'max_upload_mb': MAX_UPLOAD_MB, 'media_max_mb': MEDIA_MAX_MB,
@@ -3282,6 +3417,9 @@ def startup_check():
 
 def start_background_jobs():
     t = threading.Thread(target=auto_backup, daemon=True, name='hb-backup'); t.start()
+    if mail_configured() and MAIL_DIGEST_TIME:
+        threading.Thread(target=mail_digest_loop, daemon=True, name='hb-mail-digest').start()
+        log_event('mail', 'info', f'Dagelijks overzicht per e-mail om {MAIL_DIGEST_TIME} naar {len(MAIL_TO)} ontvanger(s)')
     return t
 
 init_db()

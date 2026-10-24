@@ -1,6 +1,5 @@
-import io, json, os, sqlite3, time
+import io, sqlite3
 from datetime import datetime, timedelta
-from conftest import make_png
 
 
 def post_json(c, url, body):

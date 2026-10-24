@@ -55,3 +55,9 @@ en media-opruiming achter een token te zetten (de app vraagt er eenmalig om).
 
 ## Tests
 `pip install -r requirements-dev.txt && python -m pytest tests` — inclusief backup → wijzigen → restore smoke-test (ook in CI).
+
+## Externe bestanden in de mediamap (Samba)
+
+Bestanden die je rechtstreeks in `media/` zet (ook in submappen, bijv. via een Samba-share) verschijnen in het Mediabeheer.
+Onder *Beheer → Media* zie je ze apart (“Extern geplaatst”), met een controle op nep-extensies. Ze worden **nooit automatisch**
+verwijderd; verwijderen kan alleen bewust met de aparte knop. Zie ook [DEPLOYMENT.md](DEPLOYMENT.md#5-mediamap-delen-via-samba-bestanden-van-buiten-plaatsen).

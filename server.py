@@ -5,6 +5,7 @@ import logging
 import logging.handlers
 import os
 import platform
+from importlib.metadata import version as importlib_metadata_version
 import secrets
 import sys
 import uuid
@@ -21,7 +22,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from werkzeug.exceptions import HTTPException
 
-APP_VERSION = '1.2.0'
+APP_VERSION = '3.9.0'
 APP_BUILD = os.environ.get('HB_BUILD', 'dev')
 START_TIME = time.time()
 START_DT = datetime.now(timezone.utc)
@@ -88,6 +89,8 @@ ORPHAN_GRACE_MIN      = _env_num('HB_ORPHAN_GRACE_MIN', 60)        # net geüplo
 LOG_MAX_MB            = _env_num('HB_LOG_MAX_MB', 2, float)
 LOG_BACKUPS           = _env_num('HB_LOG_BACKUPS', 5)
 ADMIN_TOKEN           = os.environ.get('HB_ADMIN_TOKEN', '')       # optioneel: beveiligt beheer-acties
+AUTH_USER             = os.environ.get('HB_AUTH_USER', '')         # optioneel: login (HTTP Basic) voor de hele app
+AUTH_PASSWORD         = os.environ.get('HB_AUTH_PASSWORD', '')
 
 app.config['MAX_CONTENT_LENGTH'] = max(MAX_UPLOAD_MB, MAX_IMPORT_MB) * 1024 * 1024 + 1024 * 1024
 
@@ -138,6 +141,8 @@ def too_large(e):
 def unhandled_error(e):
     """Geen stille fouten: alles wat onverwacht misgaat komt in het logboek en wordt netjes als JSON teruggegeven."""
     if isinstance(e, HTTPException):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': e.description or e.name}), e.code
         return e
     log_event('app', 'error', f'{request.method} {request.path}: {type(e).__name__}: {e}')
     if request.path.startswith('/api/'):
@@ -168,6 +173,154 @@ GEMINI_MODEL   = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash')
 # voor alle browsers/apparaten in één keer in te stellen.
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID   = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+# ── LOGIN (optioneel) & BEVEILIGINGSHEADERS ───────────────────
+# Zet HB_AUTH_USER en HB_AUTH_PASSWORD in .env om de hele app achter een login (HTTP Basic) te zetten.
+# Bedoeld als basisbeveiliging voor LAN/NAS; gebruik het altijd samen met HTTPS (reverse proxy), anders
+# gaat het wachtwoord leesbaar over het netwerk. Zie docs/DEPLOYMENT.md.
+AUTH_OPEN_PATHS = ('/api/health', '/manifest.json', '/favicon.ico', '/favicon-16.png', '/favicon-32.png', '/icon-192.png', '/icon-512.png')
+_AUTH_FAILS = {}      # ip -> [tijdstempels van mislukte pogingen]
+AUTH_MAX_FAILS, AUTH_WINDOW = 10, 300
+
+def auth_enabled():
+    return bool(AUTH_USER and AUTH_PASSWORD)
+
+@app.before_request
+def require_login():
+    if not auth_enabled() or request.path in AUTH_OPEN_PATHS: return None
+    ip = client_ip()
+    now = time.time()
+    fails = [t for t in _AUTH_FAILS.get(ip, []) if now - t < AUTH_WINDOW]
+    _AUTH_FAILS[ip] = fails
+    if len(fails) >= AUTH_MAX_FAILS:
+        return jsonify({'error': 'Te veel mislukte inlogpogingen, probeer het over een paar minuten opnieuw'}), 429
+    a = request.authorization
+    if a and a.type == 'basic':
+        ok_u = secrets.compare_digest((a.username or '').encode(), AUTH_USER.encode())
+        ok_p = secrets.compare_digest((a.password or '').encode(), AUTH_PASSWORD.encode())
+        if ok_u and ok_p:
+            _AUTH_FAILS.pop(ip, None)
+            return None
+        fails.append(now); _AUTH_FAILS[ip] = fails
+        log_event('auth', 'warning', f'Mislukte inlogpoging voor gebruiker "{(a.username or "")[:40]}"', ip=ip, pogingen=len(fails))
+    r = app.response_class('Inloggen vereist', 401)
+    r.headers['WWW-Authenticate'] = 'Basic realm="HB Inventaris", charset="UTF-8"'
+    return r
+
+@app.after_request
+def security_headers(r):
+    r.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    r.headers.setdefault('Referrer-Policy', 'same-origin')
+    r.headers.setdefault('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()')   # camera nodig voor de scanner
+    if request.is_secure: r.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')   # alleen als HTTPS via de proxy binnenkomt
+    return r
+
+# ── VALIDATIE ─────────────────────────────────────────────────
+# Alle schrijf-endpoints lezen hun invoer via V(...): verzamelt veldfouten en geeft er één nette
+# 400-respons van: {"error": "Ongeldige invoer: stock: moet een geheel getal zijn", "fields": {"stock": "..."}}.
+class Invalid(Exception):
+    def __init__(self, fields):
+        super().__init__(str(fields)); self.fields = fields
+
+def json_body():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict): raise Invalid({'_body': 'geldig JSON-object verwacht'})
+    return data
+
+DATE_RE  = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+COLOR_RE = re.compile(r'^#[0-9a-fA-F]{3,8}$')
+
+class V:
+    """Valideert en normaliseert een JSON-body. Alleen aanwezige velden komen in .out; ontbrekende velden
+    zijn toegestaan tenzij required (en partial=False). done() geeft de schone dict of gooit Invalid."""
+    def __init__(self, data=None, partial=False):
+        self.d = json_body() if data is None else data
+        self.partial, self.errors, self.out = partial, {}, {}
+    def _err(self, k, msg): self.errors.setdefault(k, msg)
+    def text(self, k, required=False, max_len=500, pattern=None, msg=None):
+        if k not in self.d:
+            if required and not self.partial: self._err(k, 'verplicht')
+            return self
+        v = self.d[k]
+        v = '' if v is None else v
+        if not isinstance(v, str): return self._err(k, 'moet tekst zijn') or self
+        v = v.strip()
+        if required and not v: return self._err(k, 'verplicht') or self
+        if len(v) > max_len: return self._err(k, f'maximaal {max_len} tekens') or self
+        if v and pattern and not pattern.match(v): return self._err(k, msg or 'ongeldig formaat') or self
+        self.out[k] = v
+        return self
+    def integer(self, k, min=0, max=10**9, nullable=False, required=False):
+        if k not in self.d:
+            if required and not self.partial: self._err(k, 'verplicht')
+            return self
+        v = self.d[k]
+        if v is None or (isinstance(v, str) and not v.strip()):
+            if nullable: self.out[k] = None
+            elif required: self._err(k, 'verplicht')
+            else: self.out[k] = 0 if min <= 0 else min
+            return self
+        if isinstance(v, bool): return self._err(k, 'moet een geheel getal zijn') or self
+        try:
+            f = float(str(v).replace(',', '.')) if isinstance(v, str) else float(v)
+        except (TypeError, ValueError, OverflowError):
+            return self._err(k, 'moet een geheel getal zijn') or self
+        if f != f or f in (float('inf'), float('-inf')) or not f.is_integer(): return self._err(k, 'moet een geheel getal zijn') or self
+        if f < min: return self._err(k, f'minimaal {min}') or self
+        if f > max: return self._err(k, f'maximaal {max}') or self
+        self.out[k] = int(f)
+        return self
+    def number(self, k, min=0, max=10**9, nullable=True):
+        if k not in self.d: return self
+        v = self.d[k]
+        if v is None or v == '':
+            if nullable: self.out[k] = None; return self
+            return self._err(k, 'verplicht') or self
+        if isinstance(v, bool): return self._err(k, 'moet een getal zijn') or self
+        try: f = float(str(v).replace(',', '.'))
+        except (TypeError, ValueError): return self._err(k, 'moet een getal zijn') or self
+        if f != f or f < min or f > max: return self._err(k, f'moet tussen {min} en {max} liggen') or self
+        self.out[k] = f
+        return self
+    def boolean(self, k):
+        if k not in self.d: return self
+        v = self.d[k]
+        if isinstance(v, bool) or v in (0, 1): self.out[k] = bool(v)
+        elif isinstance(v, str) and v.lower() in ('true', 'false', '1', '0'): self.out[k] = v.lower() in ('true', '1')
+        else: self._err(k, 'moet waar/onwaar zijn')
+        return self
+    def listf(self, k, max_items=2000, of=None):
+        if k not in self.d: return self
+        v = self.d[k]
+        if v is None: self.out[k] = []; return self
+        if not isinstance(v, list): return self._err(k, 'moet een lijst zijn') or self
+        if len(v) > max_items: return self._err(k, f'maximaal {max_items} items') or self
+        if of and any(not isinstance(i, of) for i in v): return self._err(k, 'bevat ongeldige items') or self
+        self.out[k] = v
+        return self
+    def choice(self, k, choices):
+        if k not in self.d: return self
+        v = self.d[k]
+        if v not in choices: return self._err(k, 'moet een van ' + ', '.join(choices) + ' zijn') or self
+        self.out[k] = v
+        return self
+    def done(self):
+        if self.errors: raise Invalid(self.errors)
+        return self.out
+
+def validate_part(partial):
+    v = V(partial=partial)
+    v.text('name', required=True, max_len=300).text('desc', max_len=2000).text('IPN', max_len=100).text('link', max_len=1000)
+    v.text('notes', max_len=10000).text('img', max_len=500).text('expiryDate', max_len=10, pattern=DATE_RE, msg='verwacht JJJJ-MM-DD')
+    v.integer('stock').integer('minStock').integer('catId', nullable=True).integer('locId', nullable=True)
+    v.boolean('active')
+    for f in ('docs', 'suppliers', 'extraLocs', 'related', 'tags'): v.listf(f)
+    return v.done()
+
+@app.errorhandler(Invalid)
+def invalid_input(e):
+    k, msg = next(iter(e.fields.items()))
+    return jsonify({'error': f'Ongeldige invoer: {k}: {msg}' if k != '_body' else f'Ongeldige invoer: {msg}', 'fields': e.fields}), 400
 
 # ── DATABASE ──────────────────────────────────────────────────
 def get_db():
@@ -275,7 +428,7 @@ def init_db():
         try:
             _locs = [('1', 'Lade 1'), ('2', 'Doos A'), ('3', 'Werkplek')]
             db.executemany('INSERT OR IGNORE INTO custom_locs (id, name) VALUES (?, ?)', _locs)
-            print(f'[init_db] Locaties geseed')
+            print('[init_db] Locaties geseed')
         except Exception as e:
             print(f'[init_db] Seed fout: {e}')
         # Seed categories (INSERT OR IGNORE)
@@ -508,7 +661,11 @@ def appjs(): return send_file('static/app.js', mimetype='text/javascript')
 def fonts(filename): return send_from_directory('static/fonts', filename)
 
 @app.route('/media/<path:filename>')
-def media(filename): return send_from_directory(MEDIA_DIR, filename)
+def media(filename):
+    path = safe_media_path(filename)
+    if path is None or not path.is_file() or path.suffix.lower() not in ALLOWED_EXT:
+        return jsonify({'error': 'not found'}), 404    # o.a. .html/.svg/.php van een netwerkshare worden nooit geserveerd
+    return send_from_directory(MEDIA_DIR, filename)
 
 # ── API: DATA (legacy voor frontend) ─────────────────────────
 @app.route('/api/data')
@@ -530,7 +687,7 @@ def get_parts():
 
 @app.route('/api/parts', methods=['POST'])
 def add_part():
-    p = request.get_json()
+    p = validate_part(partial=False)
     with db_conn() as db:
         nid = get_meta('nextId', '1')
         db.execute('''INSERT INTO parts (id,name,desc,IPN,link,stock,minStock,catId,locId,img,active,notes,docs,suppliers,extraLocs,related,tags,expiryDate)
@@ -547,7 +704,7 @@ def add_part():
 
 @app.route('/api/parts/<int:pid>', methods=['PUT'])
 def update_part(pid):
-    p = request.get_json()
+    p = validate_part(partial=True)
     with db_conn() as db:
         row = db.execute('SELECT * FROM parts WHERE id=?',(pid,)).fetchone()
         if not row: return jsonify({'error':'not found'}), 404
@@ -584,11 +741,13 @@ def patch_stock(pid):
     with db_conn() as db:
         row = db.execute('SELECT * FROM parts WHERE id=?',(pid,)).fetchone()
         if not row: return jsonify({'error':'not found'}), 404
-        body = request.get_json()
+        v = V(json_body())
+        v.integer('set', min=0).integer('delta', min=-10**7, max=10**7).number('price_paid').integer('suppId', nullable=True).text('note', max_len=500)
+        body = v.done()
         old = int(row['stock'] or 0)
-        if 'set' in body: new = max(0, int(body['set']))
-        elif 'delta' in body: new = max(0, old + int(body['delta']))
-        else: return jsonify({'error':'set or delta required'}), 400
+        if 'set' in body: new = body['set']
+        elif 'delta' in body: new = max(0, old + body['delta'])
+        else: raise Invalid({'set': 'set of delta is verplicht'})
         price_paid = body.get('price_paid')   # prijs per stuk op moment van inkoop
         supp_id    = body.get('suppId')       # welke leverancier
         db.execute('UPDATE parts SET stock=? WHERE id=?',(new,pid))
@@ -950,24 +1109,28 @@ def get_categories():
 
 @app.route('/api/categories', methods=['POST'])
 def add_category():
-    b = request.get_json()
+    b = V(json_body()).text('name', required=True, max_len=100).text('icon', max_len=32).integer('parent', nullable=True).integer('sort', min=-10**6).done()
     with db_conn() as db:
         # Auto-assign ID based on parent range or max+1
         parent = b.get('parent')
+        if parent and not db.execute('SELECT 1 FROM categories WHERE id=?', (parent,)).fetchone():
+            raise Invalid({'parent': 'hoofdcategorie bestaat niet'})
         if parent:
             existing = db.execute('SELECT MAX(id) as m FROM categories WHERE parent=?',(parent,)).fetchone()
             new_id = (existing['m'] or parent) + 1
         else:
             existing = db.execute('SELECT MAX(id) as m FROM categories WHERE parent IS NULL').fetchone()
             new_id = (existing['m'] or 200) + 10
+        while db.execute('SELECT 1 FROM categories WHERE id=?', (new_id,)).fetchone(): new_id += 1   # nooit een bestaand id raken
         db.execute('INSERT INTO categories (id,name,parent,icon,sort) VALUES (?,?,?,?,?)',
             (new_id, b['name'], parent, b.get('icon',''), b.get('sort',0)))
         return jsonify({'id':new_id,'name':b['name'],'parent':parent,'icon':b.get('icon',''),'sort':b.get('sort',0)})
 
 @app.route('/api/categories/<int:cid>', methods=['PUT'])
 def update_category(cid):
-    b = request.get_json()
+    b = V(json_body()).text('name', required=True, max_len=100).text('icon', max_len=32).integer('sort', min=-10**6).done()
     with db_conn() as db:
+        if not db.execute('SELECT 1 FROM categories WHERE id=?', (cid,)).fetchone(): return jsonify({'error': 'not found'}), 404
         db.execute('UPDATE categories SET name=?,icon=?,sort=? WHERE id=?',
             (b['name'], b.get('icon',''), b.get('sort',0), cid))
         return jsonify({'ok': True})
@@ -1006,9 +1169,8 @@ def get_locations():
 
 @app.route('/api/locations', methods=['POST'])
 def add_location():
-    body = request.get_json()
-    name = body.get('name','').strip()
-    if not name: return jsonify({'error':'name required'}), 400
+    body = V(json_body()).text('name', required=True, max_len=200).text('parent', max_len=50).done()
+    name = body['name']
     with db_conn() as db:
         nid = get_meta('nextLocId','300')
         parent = body.get('parent','')
@@ -1023,18 +1185,15 @@ def add_location():
 
 @app.route('/api/locations/rename', methods=['POST'])
 def rename_location():
-    body = request.get_json()
-    lid = str(body.get('id',''))
-    name = body.get('name','').strip()
-    if not lid or not name: return jsonify({'error':'id and name required'}), 400
+    body = V(json_body()).text('id', required=True, max_len=50).text('name', required=True, max_len=200).done()
+    lid, name = body['id'], body['name']
     with db_conn() as db:
         db.execute('INSERT OR REPLACE INTO custom_locs VALUES (?,?)',(lid,name))
         return jsonify({'id':lid,'name':name})
 
 @app.route('/api/locations/<lid>', methods=['PUT'])
 def update_location(lid):
-    name = request.get_json().get('name','').strip()
-    if not name: return jsonify({'error':'name required'}), 400
+    name = V(json_body()).text('name', required=True, max_len=200).done()['name']
     with db_conn() as db:
         db.execute('INSERT OR REPLACE INTO custom_locs VALUES (?,?)',(lid,name))
         return jsonify({'id':lid,'name':name})
@@ -1073,9 +1232,8 @@ def get_suppliers():
 
 @app.route('/api/suppliers', methods=['POST'])
 def add_supplier():
-    body = request.get_json()
-    name = body.get('name','').strip()
-    if not name: return jsonify({'error':'name required'}), 400
+    body = V(json_body()).text('name', required=True, max_len=200).text('url', max_len=500).text('color', max_len=9, pattern=COLOR_RE, msg='verwacht kleur zoals #aabbcc').done()
+    name = body['name']
     with db_conn() as db:
         nid = get_meta('nextSuppId','10')
         db.execute('INSERT INTO suppliers VALUES (?,?,?,?)',(nid,name,body.get('url',''),body.get('color','#888888')))
@@ -1084,7 +1242,7 @@ def add_supplier():
 
 @app.route('/api/suppliers/<int:sid>', methods=['PUT'])
 def update_supplier(sid):
-    body = request.get_json()
+    body = V(json_body(), partial=True).text('name', required=True, max_len=200).text('url', max_len=500).text('color', max_len=9, pattern=COLOR_RE, msg='verwacht kleur zoals #aabbcc').done()
     with db_conn() as db:
         existing = db.execute('SELECT * FROM suppliers WHERE id=?',(sid,)).fetchone()
         if existing:
@@ -1114,12 +1272,22 @@ def get_orders():
     with db_conn() as db:
         return jsonify([{'id':r['id'],'suppId':r['suppId'],'status':r['status'],
             'orderDate':r['orderDate'],'expectedDate':r['expectedDate'],'receivedDate':r['receivedDate'],
-            'reference':r['reference'],'notes':r['notes'],'items':json.loads(r['items'] or '[]')}
+            'reference':r['reference'],'notes':r['notes'],'items':_jlist(r['items'], r['id'], 'items')}
             for r in db.execute('SELECT * FROM orders').fetchall()])
+
+def validate_order(partial):
+    v = V(partial=partial)
+    v.integer('suppId', nullable=True).choice('status', ('besteld', 'onderweg', 'ontvangen', 'geannuleerd'))
+    for f in ('orderDate', 'expectedDate', 'receivedDate'): v.text(f, max_len=10, pattern=DATE_RE, msg='verwacht JJJJ-MM-DD')
+    v.text('reference', max_len=200).text('notes', max_len=5000).listf('items', of=dict)
+    out = v.done()
+    for it in out.get('items', []):
+        W = V(it, partial=True); W.integer('partId', nullable=True).integer('qty'); W.done()
+    return out
 
 @app.route('/api/orders', methods=['POST'])
 def add_order():
-    body = request.get_json()
+    body = validate_order(partial=False)
     with db_conn() as db:
         nid = get_meta('nextOrderId','1')
         db.execute('INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?)',
@@ -1132,7 +1300,7 @@ def add_order():
 
 @app.route('/api/orders/<int:oid>', methods=['PUT'])
 def update_order(oid):
-    body = request.get_json()
+    body = validate_order(partial=True)
     with db_conn() as db:
         row = db.execute('SELECT * FROM orders WHERE id=?',(oid,)).fetchone()
         if not row: return jsonify({'error':'not found'}), 404
@@ -1146,12 +1314,12 @@ def update_order(oid):
 
 @app.route('/api/orders/<int:oid>/receive', methods=['POST'])
 def receive_order(oid):
-    body = request.get_json()
+    body = V(json_body(), partial=True).listf('items', of=dict).done()
     with db_conn() as db:
         row = db.execute('SELECT * FROM orders WHERE id=?',(oid,)).fetchone()
         if not row: return jsonify({'error':'not found'}), 404
         for item in body.get('items',json.loads(row['items'] or '[]')):
-            pid,qty = item.get('partId'),int(item.get('qty',0))
+            pid = item.get('partId'); qty = V(item, partial=True).integer('qty').done().get('qty', 0)
             if not pid or qty <= 0: continue
             part = db.execute('SELECT * FROM parts WHERE id=?',(pid,)).fetchone()
             if part:
@@ -1177,19 +1345,25 @@ def get_projects():
         result = []
         for r in rows:
             p = {'id':r['id'],'name':r['name'],'desc':r['desc'],'status':r['status'],
-                 'items':json.loads(r['items'] or '[]'),'created':r['created'],
-                 'buildHistory':json.loads(r['buildHistory'] or '[]')}
+                 'items':_jlist(r['items'], r['id'], 'items'),'created':r['created'],
+                 'buildHistory':_jlist(r['buildHistory'], r['id'], 'buildHistory')}
             # Merge extra fields (version, deadline, margin, tags etc)
-            extra = json.loads(r['extra'] or '{}')
-            p.update(extra)
+            extra = _jl(r['extra'], {})
+            p.update(extra if isinstance(extra, dict) else {})
             result.append(p)
         return jsonify(result)
 
+def validate_project(partial):
+    raw = json_body()
+    v = V(raw, partial=partial)
+    v.text('name', required=True, max_len=200).text('desc', max_len=5000).text('status', max_len=50).listf('items', of=dict).listf('buildHistory')
+    clean = v.done()
+    return {**raw, **clean}   # overige velden (versie, deadline, marge...) blijven bewaard
+
 @app.route('/api/projects', methods=['POST'])
 def add_project():
-    body = request.get_json()
-    name = body.get('name','').strip()
-    if not name: return jsonify({'error':'name required'}), 400
+    body = validate_project(partial=False)
+    name = body['name']
     with db_conn() as db:
         nid = get_meta('nextProjectId','1')
         created = datetime.now(timezone.utc).isoformat()
@@ -1207,7 +1381,7 @@ def add_project():
 
 @app.route('/api/projects/<int:pid>', methods=['PUT'])
 def update_project(pid):
-    body = request.get_json()
+    body = validate_project(partial=True)
     with db_conn() as db:
         row = db.execute('SELECT * FROM projects WHERE id=?',(pid,)).fetchone()
         if not row: return jsonify({'error':'not found'}), 404
@@ -1251,9 +1425,8 @@ def sniff_kind(head):
 
 def media_total_bytes():
     total = 0
-    for f in MEDIA_DIR.iterdir():
-        try:
-            if f.is_file(): total += f.stat().st_size
+    for _, f in iter_media():
+        try: total += f.stat().st_size
         except OSError: pass
     return total
 
@@ -1340,13 +1513,82 @@ def _jl(raw, default=None):
     return v
 
 def _media_name(url):
-    """'/media/abc.jpg' -> 'abc.jpg' voor interne verwijzingen, anders None (externe URL's tellen niet mee)."""
+    """'/media/sub/a%20b.jpg' -> 'sub/a b.jpg' (pad binnen de mediamap) voor interne verwijzingen, anders None
+    (externe URL's tellen niet mee). Submappen zijn toegestaan, zodat bestanden via bijv. een Samba-share
+    in mappen gezet kunnen worden."""
     if not url or not isinstance(url, str): return None
     u = url.split('?', 1)[0].split('#', 1)[0]
     if '://' in u or u.startswith('//'): return None
     from urllib.parse import unquote
-    name = unquote(Path(u).name)
-    return name or None
+    u = unquote(u).replace('\\', '/')
+    rel = u[len('/media/'):] if u.startswith('/media/') else Path(u).name
+    parts_ = [x for x in rel.split('/') if x]
+    if not parts_ or any(x in ('.', '..') for x in parts_): return None
+    return '/'.join(parts_)
+
+MEDIA_MAX_DEPTH = 4
+APP_FILE_RE = re.compile(r'^(?:[0-9a-f]{32}\.(?:jpe?g|png|gif|webp|pdf)|.+_[0-9a-f]{6}\.pdf)$')
+
+def is_app_file(rel):
+    """Door de app zelf aangemaakt (upload)? Alleen bovenin de map; alles anders is 'extern' geplaatst
+    (bijv. via een netwerkshare) en wordt nooit automatisch opgeruimd."""
+    return '/' not in rel and bool(APP_FILE_RE.match(rel))
+
+def iter_media(max_depth=MEDIA_MAX_DEPTH):
+    """Alle bestanden in de mediamap, inclusief submappen: (relatief pad, Path). Verborgen bestanden/mappen
+    en symbolische links worden overgeslagen (een symlink zou buiten de mediamap kunnen wijzen)."""
+    root = MEDIA_DIR
+    def walk(d, rel, depth):
+        try: entries = sorted(d.iterdir(), key=lambda x: x.name.lower())
+        except OSError: return
+        for e in entries:
+            if e.name.startswith('.') or e.is_symlink(): continue
+            r = f'{rel}/{e.name}' if rel else e.name
+            if e.is_dir():
+                if depth < max_depth: yield from walk(e, r, depth + 1)
+            elif e.is_file():
+                yield r, e
+    yield from walk(root, '', 1)
+
+def safe_media_path(rel):
+    """Pad binnen de mediamap of None (pad-traversal, verborgen delen, symlinks)."""
+    if not rel or '\x00' in rel: return None
+    parts_ = [x for x in rel.replace('\\', '/').split('/') if x]
+    if not parts_ or any(x.startswith('.') for x in parts_): return None
+    path = MEDIA_DIR.joinpath(*parts_)
+    try:
+        if path.is_symlink() or MEDIA_DIR.resolve() not in path.resolve().parents: return None
+    except OSError: return None
+    return path
+
+def media_url(rel):
+    from urllib.parse import quote
+    return '/media/' + quote(rel)
+
+def scan_media(deep=False):
+    """Controleert (extern geplaatste) bestanden: toegestane extensie, inhoud klopt met extensie, niet te groot."""
+    out, ext_count = [], 0
+    for rel, f in iter_media():
+        if is_app_file(rel): continue
+        ext_count += 1
+        probs = []
+        ext = f.suffix.lower()
+        if ext in DANGEROUS_EXT: probs.append('gevaarlijk bestandstype (wordt niet getoond)')
+        elif ext not in ALLOWED_EXT: probs.append('bestandstype niet toegestaan (wordt niet getoond)')
+        else:
+            try:
+                with open(f, 'rb') as fh: kind = sniff_kind(fh.read(16))
+                if kind != EXT_KIND[ext]: probs.append('inhoud komt niet overeen met de extensie')
+                elif deep and ext in IMAGE_EXT:
+                    try:
+                        from PIL import Image as PILImage
+                        with PILImage.open(f) as im: im.verify()
+                    except ImportError: pass
+                    except Exception: probs.append('beschadigd beeldbestand')
+            except OSError as e: probs.append(f'onleesbaar: {e}')
+            if f.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024: probs.append(f'groter dan {MAX_UPLOAD_MB} MB')
+        if probs: out.append({'name': rel, 'size': f.stat().st_size, 'problems': probs})
+    return {'external_files': ext_count, 'problems': out}
 
 def media_refs(db):
     """Alle verwijzingen naar mediabestanden vanuit onderdelen: lijst van (bestandsnaam, partId, partNaam, veld, url)."""
@@ -1364,68 +1606,66 @@ def media_refs(db):
 def find_orphans(include_recent=False):
     """Bestanden in de mediamap waar geen onderdeel meer naar verwijst. Bestanden die minder dan
     HB_ORPHAN_GRACE_MIN minuten oud zijn worden overgeslagen: ze kunnen zojuist geüpload zijn
-    voor een formulier dat nog niet is opgeslagen."""
+    voor een formulier dat nog niet is opgeslagen. 'external' = niet door de app zelf geüpload
+    (bijv. via een netwerkshare geplaatst): die worden alleen op expliciet verzoek opgeruimd."""
     with db_conn() as db:
         used = {r[0] for r in media_refs(db)}
     now = time.time()
     orphans, recent = [], []
-    for f in sorted(MEDIA_DIR.iterdir()):
-        if not f.is_file() or f.name.startswith('.') or f.name in used: continue
+    for rel, f in iter_media():
+        if rel in used: continue
         st = f.stat()
-        entry = {'name': f.name, 'url': f'/media/{f.name}', 'size': st.st_size,
-                 'age_min': int((now - st.st_mtime) / 60)}
-        if not include_recent and entry['age_min'] < ORPHAN_GRACE_MIN: recent.append(entry)
+        entry = {'name': rel, 'url': media_url(rel), 'size': st.st_size, 'age_min': int((now - st.st_mtime) / 60),
+                 'external': not is_app_file(rel)}
+        if not include_recent and not entry['external'] and entry['age_min'] < ORPHAN_GRACE_MIN: recent.append(entry)
         else: orphans.append(entry)
     return orphans, recent
 
-@app.route('/api/upload/<filename>', methods=['DELETE'])
+@app.route('/api/upload/<path:filename>', methods=['DELETE'])
 def delete_image(filename):
-    if re.search(r'[/\\]',filename): return jsonify({'error':'invalid'}), 400
-    force = request.args.get('force') == '1'
-    if not force:
+    path = safe_media_path(filename)
+    if path is None: return jsonify({'error': 'invalid'}), 400
+    rel = _media_name('/media/' + filename)
+    if request.args.get('force') != '1':
         with db_conn() as db:
-            rows = db.execute('SELECT id,name,img,docs FROM parts').fetchall()
-        used_by = []
-        for p in rows:
-            if p['img'] and Path(p['img']).name == filename:
-                used_by.append({'id': p['id'], 'name': p['name']})
-            for doc in _jl(p['docs']):
-                if isinstance(doc, dict) and doc.get('url') and Path(doc['url']).name == filename:
-                    used_by.append({'id': p['id'], 'name': p['name']})
+            used_by = [{'id': r[1], 'name': r[2]} for r in media_refs(db) if r[0] == rel]
         if used_by:
             # Bestand wordt nog door (een) ander(e) onderdeel/onderdelen gebruikt — niet verwijderen.
             return jsonify({'error': 'in_use', 'used_by': used_by}), 409
-    (MEDIA_DIR/filename).unlink(missing_ok=True)
-    return jsonify({'ok':True})
+    path.unlink(missing_ok=True)
+    return jsonify({'ok': True})
 
 @app.route('/api/media', methods=['GET'])
 def list_media():
+    """Alle mediabestanden (ook in submappen en extern geplaatste). Nieuwe bestanden verschijnen direct, zonder herstart."""
     with db_conn() as db:
-        rows = db.execute('SELECT id,name,img,docs FROM parts').fetchall()
-    used = {}
-    for p in rows:
-        if p['img']: used.setdefault(Path(p['img']).name,[]).append({'id':p['id'],'name':p['name']})
-        for doc in _jl(p['docs']):
-            if isinstance(doc, dict) and doc.get('url'): used.setdefault(Path(doc['url']).name,[]).append({'id':p['id'],'name':p['name']})
+        used = {}
+        for name, pid, pname, _field, _url in media_refs(db): used.setdefault(name, []).append({'id': pid, 'name': pname})
     files = []
-    for f in sorted(MEDIA_DIR.iterdir()):
-        if not f.is_file() or f.name.startswith('.'): continue
-        entry = {'name':f.name,'url':f'/media/{f.name}','size':f.stat().st_size,
-                 'ext':f.suffix.lower(),'used_by':used.get(f.name,[]),'width':None,'height':None}
-        if f.suffix.lower() in {'.jpg','.jpeg','.png','.webp','.gif'}:
+    for rel, f in iter_media():
+        ext = f.suffix.lower()
+        if ext not in ALLOWED_EXT: continue          # niet-toegestane bestanden worden niet getoond (zie /api/media/scan)
+        entry = {'name': rel, 'url': media_url(rel), 'size': f.stat().st_size, 'ext': ext,
+                 'used_by': used.get(rel, []), 'width': None, 'height': None, 'external': not is_app_file(rel)}
+        if ext in {'.jpg', '.jpeg', '.png', '.webp', '.gif'}:
             try:
                 from PIL import Image as PILImage
-                with PILImage.open(f) as img: entry['width'],entry['height'] = img.size
-            except: pass
+                with PILImage.open(f) as img: entry['width'], entry['height'] = img.size
+            except Exception: pass
         files.append(entry)
     return jsonify(files)
 
+@app.route('/api/media/scan', methods=['GET'])
+def scan_external_media():
+    """Controleert extern geplaatste bestanden (bijv. via Samba) op ongeldige types/inhoud. ?deep=1 controleert ook beelden."""
+    return jsonify(scan_media(deep=request.args.get('deep') == '1'))
+
 @app.route('/api/media/resize', methods=['POST'])
 def resize_image():
-    body = request.get_json()
-    filename = body.get('filename','')
-    if re.search(r'[/\\]',filename): return jsonify({'error':'invalid'}), 400
-    path = MEDIA_DIR/filename
+    body = V(json_body()).text('filename', required=True, max_len=400).integer('maxSize', min=16, max=10000).integer('maxBytes', min=1024, max=10**9).done()
+    filename = body['filename']
+    path = safe_media_path(filename)
+    if path is None: return jsonify({'error':'invalid'}), 400
     if not path.exists(): return jsonify({'error':'not found'}), 404
     ext = path.suffix.lower()
     if ext not in {'.jpg','.jpeg','.png','.webp','.gif'}: return jsonify({'error':'not an image'}), 400
@@ -1481,8 +1721,8 @@ def resize_image():
             'width': img.width,
             'height': img.height,
             'size': save_path.stat().st_size,
-            'newName': save_path.name,
-            'converted': save_path.name != filename
+            'newName': save_path.relative_to(MEDIA_DIR).as_posix(),
+            'converted': save_path.relative_to(MEDIA_DIR).as_posix() != filename
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1504,11 +1744,15 @@ def delete_orphans():
     body = request.get_json(silent=True) or {}
     names = body.get('names')
     if isinstance(names, list): orphans = [o for o in orphans if o['name'] in set(map(str, names))]
+    skipped_external = [o for o in orphans if o['external']] if request.args.get('include_external') != '1' else []
+    if skipped_external: orphans = [o for o in orphans if not o['external']]
     deleted, errors = [], []
     if not dry:
         for o in orphans:
             try:
-                (MEDIA_DIR / o['name']).unlink(missing_ok=True); deleted.append(o['name'])
+                target = safe_media_path(o['name'])
+                if target is None: continue
+                target.unlink(missing_ok=True); deleted.append(o['name'])
             except OSError as e:
                 errors.append({'name': o['name'], 'error': str(e)})
                 log_event('media', 'error', f'Orphan verwijderen mislukt: {o["name"]}: {e}')
@@ -1516,7 +1760,7 @@ def delete_orphans():
     return jsonify({'dry_run': dry, 'deleted': deleted if not dry else [], 'would_delete': [o['name'] for o in orphans] if dry else [],
                     'count': len(deleted) if not dry else len(orphans),
                     'freed': sum(o['size'] for o in orphans if o['name'] in deleted),
-                    'skipped_recent': len(recent), 'errors': errors})
+                    'skipped_recent': len(recent), 'skipped_external': len(skipped_external), 'errors': errors})
 
 @app.route('/api/media/broken', methods=['GET'])
 def broken_media_refs():
@@ -1524,7 +1768,7 @@ def broken_media_refs():
     return jsonify(find_broken_refs())
 
 def find_broken_refs():
-    existing = {f.name for f in MEDIA_DIR.iterdir() if f.is_file()}
+    existing = {rel for rel, _ in iter_media()}
     out = []
     with db_conn() as db:
         for name, pid, pname, field, url in media_refs(db):
@@ -2065,7 +2309,10 @@ def run_checks(db, include_media=True):
                                         repair='clear_broken_media', inspect='parts'))
         orphans, recent = find_orphans()
         if orphans: issues.append(_issue('orphan_media', 'info', 'Ongebruikte mediabestanden', orphans, inspect='media',
-                                         detail=f'Samen {sum(o["size"] for o in orphans) // 1024} KB; opruimen via Media-tab (met voorbeeld).'))
+                                         detail=f'Samen {sum(o["size"] for o in orphans) // 1024} KB; opruimen via Media-tab (met voorbeeld). Extern geplaatste bestanden worden nooit automatisch verwijderd.'))
+        ext = scan_media()
+        if ext['problems']: issues.append(_issue('external_media', 'warning', 'Extern geplaatste mediabestanden met problemen', ext['problems'],
+                                                 inspect='media', detail='Bestanden met een niet-toegestaan type of een inhoud die niet bij de extensie past worden niet getoond of geserveerd.'))
     return issues
 
 def summarize_issues(issues):
@@ -2236,7 +2483,7 @@ def _file_size(p):
 def storage_report():
     db_size = _file_size(DB_FILE)
     wal_size = _file_size(str(DB_FILE) + '-wal')
-    media_size, media_files = _dir_size(MEDIA_DIR)
+    media_size, media_files = media_total_bytes(), sum(1 for _ in iter_media())
     backup_size, backup_files = _dir_size(BACKUP_DIR)
     log_size, _ = _dir_size(LOG_DIR)
     disks, seen = [], {}
@@ -2272,14 +2519,13 @@ def _has_module(name):
     except ImportError: return False
 
 def system_info():
-    import flask
     up = int(time.time() - START_TIME)
     return {'version': APP_VERSION, 'build': APP_BUILD, 'schema_version': get_schema_version(), 'schema_latest': SCHEMA_VERSION,
             'started_at': START_DT.astimezone().isoformat(timespec='seconds'), 'uptime_seconds': up,
-            'python': platform.python_version(), 'platform': platform.platform(), 'flask': flask.__version__,
+            'python': platform.python_version(), 'platform': platform.platform(), 'flask': importlib_metadata_version('flask'),
             'sqlite': sqlite3.sqlite_version, 'pillow': _has_module('PIL'), 'openpyxl': _has_module('openpyxl'),
             'gemini_configured': bool(GEMINI_API_KEY), 'telegram_configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
-            'admin_token_required': bool(ADMIN_TOKEN),
+            'admin_token_required': bool(ADMIN_TOKEN), 'auth_enabled': auth_enabled(),
             'settings': {'backup_time': BACKUP_TIME, 'backup_retention_days': BACKUP_RETENTION_DAYS, 'backup_keep_min': BACKUP_KEEP_MIN,
                          'backup_stale_hours': BACKUP_STALE_HOURS, 'max_upload_mb': MAX_UPLOAD_MB, 'media_max_mb': MEDIA_MAX_MB,
                          'orphan_grace_min': ORPHAN_GRACE_MIN, 'log_max_mb': LOG_MAX_MB, 'log_backups': LOG_BACKUPS}}

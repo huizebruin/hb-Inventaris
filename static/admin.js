@@ -68,7 +68,7 @@
       `<div class="adm-note">Waarschuwing vanaf ${st.thresholds.warn_pct}% gebruikt of minder dan ${st.thresholds.warn_free_mb} MB vrij (HB_DISK_WARN_PCT / HB_DISK_WARN_FREE_MB). Back-ups: ${SZ(st.backup_size)} in ${st.backup_files} bestanden · logboek ${SZ(st.log_size)}.</div>`;
     html += `<div class="acts" style="display:flex;gap:8px;flex-wrap:wrap">${lv ? `<a class="btn sec sm" href="/api/backups/${E(lv.name)}" download>↓ Download nieuwste backup</a>` : ''}
       <button class="btn sm" data-act="mkbackup">💾 Nu backup maken</button><button class="btn sec sm" data-act="tab" data-arg="ov">↻ Vernieuwen</button></div>
-      <div class="adm-note" style="margin-top:14px">Python ${E(s.python)} · Flask ${E(s.flask)} · SQLite ${E(s.sqlite)} · Pillow ${s.pillow ? 'ja' : 'nee'} · openpyxl ${s.openpyxl ? 'ja' : 'nee'} · AI ${s.gemini_configured ? 'aan' : 'uit'} · Telegram ${s.telegram_configured ? 'aan' : 'uit'} · beheer-token ${s.admin_token_required ? 'vereist' : 'niet ingesteld'}</div>`;
+      <div class="adm-note" style="margin-top:14px">Python ${E(s.python)} · Flask ${E(s.flask)} · SQLite ${E(s.sqlite)} · Pillow ${s.pillow ? 'ja' : 'nee'} · openpyxl ${s.openpyxl ? 'ja' : 'nee'} · AI ${s.gemini_configured ? 'aan' : 'uit'} · Telegram ${s.telegram_configured ? 'aan' : 'uit'} · beheer-token ${s.admin_token_required ? 'vereist' : 'niet ingesteld'} · login ${s.auth_enabled ? 'aan' : 'uit (alleen LAN!)'}</div>`;
     $('admBody').innerHTML = html;
   }
 
@@ -219,11 +219,17 @@
 
   // ── Media ────────────────────────────────────────────────────
   async function tMedia() {
-    const [o, b] = await Promise.all([api('/api/media/orphans'), api('/api/media/broken')]);
-    let h = `<div class="adm-h">Ongebruikte bestanden (${o.count}, ${SZ(o.size)})</div>`;
-    h += o.count ? `<table class="adm-tbl"><tr><th>Bestand</th><th>Grootte</th><th>Leeftijd</th></tr>${o.files.map(f => `<tr><td><a href="${E(f.url)}" target="_blank" rel="noopener">${E(f.name)}</a></td><td>${SZ(f.size)}</td><td>${f.age_min} min</td></tr>`).join('')}</table>
-      <div style="margin-top:8px"><button class="btn danger sm" data-act="delorph">🗑 Deze ${o.count} bestanden verwijderen</button></div>` : '<div class="adm-ok">✓ Geen ongebruikte bestanden</div>';
+    const [o, b, sc] = await Promise.all([api('/api/media/orphans'), api('/api/media/broken'), api('/api/media/scan')]);
+    const app = o.files.filter(f => !f.external), ext = o.files.filter(f => f.external);
+    let h = `<div class="adm-note">Bestanden mogen ook rechtstreeks in de mediamap (of een submap) worden geplaatst, bijvoorbeeld via een Samba-share. Ze verschijnen direct in Mediabeheer en zijn te koppelen aan onderdelen. Extern geplaatste bestanden worden <b>nooit automatisch</b> opgeruimd.</div>
+      <div class="adm-h">Ongebruikt, door de app geüpload (${app.length}, ${SZ(app.reduce((n, f) => n + f.size, 0))})</div>`;
+    const tbl = list => `<table class="adm-tbl"><tr><th>Bestand</th><th>Grootte</th><th>Leeftijd</th></tr>${list.map(f => `<tr><td><a href="${E(f.url)}" target="_blank" rel="noopener">${E(f.name)}</a></td><td>${SZ(f.size)}</td><td>${f.age_min} min</td></tr>`).join('')}</table>`;
+    h += app.length ? tbl(app) + `<div style="margin-top:8px"><button class="btn danger sm" data-act="delorph">🗑 Deze ${app.length} bestanden verwijderen</button></div>` : '<div class="adm-ok">✓ Niets op te ruimen</div>';
     if (o.skipped_recent.length) h += `<div class="adm-note">${o.skipped_recent.length} recent geüpload bestand(en) worden overgeslagen (minder dan ${o.grace_min} min oud), voor het geval het formulier nog niet is opgeslagen.</div>`;
+    h += `<div class="adm-h">Extern geplaatst en nog niet gekoppeld (${ext.length})</div>`;
+    h += ext.length ? tbl(ext) + `<div style="margin-top:8px"><button class="btn sec sm" data-act="delorphext">🗑 Ook deze ${ext.length} extern geplaatste bestanden verwijderen…</button></div>` : '<div class="adm-note">Geen.</div>';
+    h += `<div class="adm-h">Extern geplaatst: controle (${sc.external_files} bestanden)</div>`;
+    h += sc.problems.length ? `<table class="adm-tbl"><tr><th>Bestand</th><th>Probleem</th></tr>${sc.problems.map(x => `<tr><td>${E(x.name)}</td><td>${E(x.problems.join('; '))}</td></tr>`).join('')}</table>` : '<div class="adm-ok">✓ Geen problemen</div>';
     h += `<div class="adm-h">Verwijzingen naar ontbrekende bestanden (${b.length})</div>`;
     h += b.length ? `<table class="adm-tbl"><tr><th>Onderdeel</th><th>Veld</th><th>Bestand</th></tr>${b.map(x => `<tr><td><a data-act="open" data-arg="${x.partId}">#${x.partId} ${E(x.partName)}</a></td><td>${x.field}</td><td>${E(x.file)}</td></tr>`).join('')}</table>
       <div style="margin-top:8px"><button class="btn sm" data-act="repair" data-arg="clear_broken_media">🛠 Ontbrekende verwijzingen wissen</button></div>` : '<div class="adm-ok">✓ Alle foto\'s en documenten bestaan</div>';
@@ -239,7 +245,7 @@
       <div class="adm-card"><div class="l">Logbestand</div><div class="v">${SZ(d.summary.file_size)}</div><div class="s">rotatie: ${d.summary.rotation.max_mb} MB × ${d.summary.rotation.backups}</div></div></div>`;
     if (cats.length) h += `<div class="adm-note">Per categorie (24u): ${cats.map(c => `<b>${E(c)}</b> ${d.summary.by_category[c].errors} fouten / ${d.summary.by_category[c].warnings} waarschuwingen`).join(' · ')}</div>`;
     h += `<div class="adm-filters"><select data-f="level">${[['info', 'Alles'], ['warning', 'Waarschuwingen+'], ['error', 'Alleen fouten']].map(([v, l]) => `<option value="${v}" ${logF.level === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <select data-f="category"><option value="">Alle categorieën</option>${['app', 'db', 'media', 'upload', 'backup', 'restore', 'repair', 'import', 'export', 'ai', 'startup', 'admin'].map(c => `<option ${logF.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <select data-f="category"><option value="">Alle categorieën</option>${['app', 'db', 'media', 'upload', 'backup', 'restore', 'repair', 'import', 'export', 'ai', 'startup', 'admin', 'auth'].map(c => `<option ${logF.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
       <input data-f="q" placeholder="Zoek in logboek…" value="${E(logF.q)}"><a class="btn sec sm" href="/api/admin/logs/download" download>↓ Logbestand</a></div>`;
     h += d.entries.length ? `<table class="adm-tbl adm-log">${d.entries.map(e => `<tr class="${e.level}"><td style="white-space:nowrap">${e.ts}</td><td>${e.level}</td><td>${E(e.category)}</td><td>${E(e.message)}</td></tr>`).join('')}</table>` : '<div class="adm-ok">Geen meldingen</div>';
     $('admBody').innerHTML = h;
@@ -271,6 +277,7 @@
       else if (a === 'impPreview') await impPreview();
       else if (a === 'impCommit') await impCommit();
       else if (a === 'impCancel') await impCancel();
+      else if (a === 'delorphext') { if (confirm('Extern geplaatste bestanden die nergens aan gekoppeld zijn definitief verwijderen? Dit kan niet ongedaan worden gemaakt.')) { const r = await api('/api/media/orphans?include_external=1', 'DELETE'); T(`🗑 ${r.count} bestand(en) verwijderd`); go('media'); } }
       else if (a === 'delorph') { const r = await api('/api/media/orphans', 'DELETE'); T(`🗑 ${r.count} bestand(en) verwijderd`); go('media'); }
     } catch (x) { T('⚠ ' + (x.message || x)); }
   }

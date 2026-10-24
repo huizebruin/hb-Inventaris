@@ -7,7 +7,7 @@
   const $ = id => document.getElementById(id);
   const E = s => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
   const SZ = b => (typeof formatSize === 'function' ? formatSize(b || 0) : ((b || 0) / 1048576).toFixed(1) + ' MB');
-  const fdt = s => { if (!s) return '—'; const d = new Date(s); return isNaN(d) ? s : d.toLocaleString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const fdt = s => { if (!s) return '—'; const d = new Date(s); return isNaN(d) ? s : d.toLocaleString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
   const dur = sec => { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + 'd ' : '') + (h || d ? h + 'u ' : '') + m + 'm'; };
   const SEV = { ok: 'In orde', warning: 'Aandacht', error: 'Fout', info: 'Info' };
   const badge = (sev, txt) => `<span class="adm-badge ${sev}">${E(txt || SEV[sev] || sev)}</span>`;
@@ -18,7 +18,7 @@
   window.openAdmin = function (t) {
     if (!$('adminOvl')) {
       const o = document.createElement('div');
-      o.className = 'overlay'; o.id = 'adminOvl';
+      o.className = 'overlay'; o.id = 'adminOvl'; o.setAttribute('data-i18n-loose', '');
       o.innerHTML = `<div class="modal" role="dialog" aria-label="Beheer en gezondheid"><div class="mhdr"><h3>🩺 Beheer &amp; gezondheid</h3>
         <div style="display:flex;gap:8px;align-items:center"><span id="admStatus"></span><button class="xcls" data-act="close" aria-label="Sluiten">✕</button></div></div>
         <div class="adm-tabs" role="tablist">${TABS.map(([k, l]) => `<button class="adm-tab" role="tab" data-act="tab" data-arg="${k}">${l}</button>`).join('')}</div>

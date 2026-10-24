@@ -7,12 +7,14 @@ Gemaakt door [huizebruin.nl](https://huizebruin.nl).
 
 <img src="docs/screenshots/hoofdscherm-desktop.png" alt="HB Inventaris op de desktop: onderdelenlijst met snelfilters, voorraad +/- en statusbalk" width="100%">
 
-## Let op: alleen voor LAN-gebruik
+## ⚠️ Let op: alleen voor LAN-gebruik
 
-Deze app heeft **geen authenticatie** — hij is bedoeld om binnen je eigen
-netwerk te draaien (bijv. achter een nginx reverse proxy op je NAS), of
-lokaal op je eigen pc. Zet hem **niet** direct open op het internet zonder
-zelf authenticatie/HTTPS ervoor te regelen.
+Standaard heeft deze app **geen login**. Wie de poort bereikt, kan alle gegevens lezen, wijzigen en verwijderen.
+Zet hem daarom **nooit direct open op het internet** (geen port-forward naar poort 5000).
+
+- Binnen je eigen netwerk: stel eventueel `HB_AUTH_USER` en `HB_AUTH_PASSWORD` in `.env` in voor een login.
+- Van buitenaf: gebruik een VPN, of een reverse proxy met **HTTPS** en login.
+- Stap-voor-stap, checklist, nginx/Caddy-voorbeelden en firewallregels: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 Er zijn twee manieren om de app te draaien: via **Docker** (aanbevolen voor
 een NAS/server), of **direct op Windows** zonder Docker.
@@ -142,6 +144,17 @@ De keuze wordt in je browser onthouden.
 <img src="docs/screenshots/licht-thema-desktop.png" alt="Hoofdscherm in het lichte thema" width="100%">
 
 </details>
+
+## Tests en ontwikkelen
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest      # tests (gebruiken een tijdelijke database, raken jouw data niet aan)
+ruff check .          # lint
+```
+
+GitHub Actions draait dit bij elke push. Wijzigingen staan in [CHANGELOG.md](CHANGELOG.md); een release maak je door een tag
+(bijv. `3.9.0`, gelijk aan `APP_VERSION` in `server.py`) te pushen.
 
 ## Beheer, back-ups en import/export
 

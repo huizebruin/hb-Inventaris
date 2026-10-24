@@ -1,7 +1,6 @@
 """Gedeelde testopzet: elke test krijgt een verse app met eigen (tijdelijke) data-, media- en backupmap."""
 import importlib
 import io
-import os
 import sys
 from pathlib import Path
 

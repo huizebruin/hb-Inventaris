@@ -1,6 +1,5 @@
-import io, json, os, sqlite3, time
+import io, sqlite3
 from datetime import datetime, timedelta
-from conftest import make_png
 
 
 def post_json(c, url, body):
@@ -299,3 +298,13 @@ def test_migrations_upgrade_legacy_db(tmp_path, monkeypatch):
         srv.BACKUP_STOP.set()
         for h in list(srv.logger.handlers): srv.logger.removeHandler(h); h.close()
         sys.modules.pop('server', None)
+
+
+def test_ai_errors_are_logged(srv, client, monkeypatch):
+    monkeypatch.setattr(srv, 'GEMINI_API_KEY', 'x')
+    def boom(*a, **k): raise OSError('geen netwerk')
+    monkeypatch.setattr(srv.urllib.request, 'urlopen', boom)
+    r = client.post('/api/ai/lookup', json={'name': 'ESP32'})
+    assert r.status_code == 502
+    assert 'ai |' in open(srv.LOG_FILE, encoding='utf-8').read()
+    assert 'ai' in client.get('/api/admin/logs?level=warning').get_json()['summary']['by_category']

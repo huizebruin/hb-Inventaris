@@ -22,7 +22,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from werkzeug.exceptions import HTTPException
 
-APP_VERSION = '3.10.0'
+APP_VERSION = '3.9.1'
 APP_BUILD = os.environ.get('HB_BUILD', 'dev')
 START_TIME = time.time()
 START_DT = datetime.now(timezone.utc)

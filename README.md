@@ -1,3 +1,5 @@
+🇳🇱 Nederlands · [🇬🇧 English](README.en.md)
+
 # HB Inventaris
 
 Zelf-gehoste inventarisbeheer-app voor elektronica-onderdelen. Flask +

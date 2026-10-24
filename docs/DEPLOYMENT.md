@@ -1,3 +1,5 @@
+🇳🇱 Nederlands · [🇬🇧 English](DEPLOYMENT.en.md)
+
 # Veilig draaien (secure deployment)
 
 HB Inventaris is gemaakt voor **thuis/LAN**. Standaard heeft de app geen login, en wie de poort kan bereiken kan alles

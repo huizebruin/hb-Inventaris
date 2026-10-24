@@ -1,3 +1,5 @@
+🇳🇱 Nederlands · [🇬🇧 English](CHANGELOG.en.md)
+
 # Changelog
 
 Alle noemenswaardige wijzigingen. Formaat volgens [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/),

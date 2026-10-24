@@ -45,3 +45,16 @@ def test_digest_follows_language(srv, client, monkeypatch):
     monkeypatch.setattr(srv, 'MAIL_LANG', 'nl')
     subject, text, html = srv.build_digest()
     assert subject.startswith('Overzicht:') and 'Lage voorraad' in text
+
+
+def test_changelogs_have_same_versions():
+    def versions(name):
+        return re.findall(r'^## \[([^\]]+)\]', (ROOT / name).read_text(encoding='utf-8'), re.M)
+    nl, en = versions('CHANGELOG.md'), versions('CHANGELOG.en.md')
+    nl = ['Unreleased' if v == 'Onuitgebracht' else v for v in nl]
+    assert nl == en
+
+
+def test_english_docs_exist_and_link_back():
+    for en, nl in (('README.en.md', 'README.md'), ('docs/ADMIN.en.md', 'ADMIN.md'), ('docs/DEPLOYMENT.en.md', 'DEPLOYMENT.md'), ('CHANGELOG.en.md', 'CHANGELOG.md')):
+        assert nl in (ROOT / en).read_text(encoding='utf-8').splitlines()[0]

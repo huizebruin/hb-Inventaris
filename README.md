@@ -1,3 +1,5 @@
+🇳🇱 Nederlands · [🇬🇧 English](README.en.md)
+
 # HB Inventaris
 
 Zelf-gehoste inventarisbeheer-app voor elektronica-onderdelen. Flask +
@@ -144,6 +146,12 @@ De keuze wordt in je browser onthouden.
 <img src="docs/screenshots/licht-thema-desktop.png" alt="Hoofdscherm in het lichte thema" width="100%">
 
 </details>
+
+## Taal / Language
+
+De app is beschikbaar in **Nederlands en Engels**: *Menu → Instellingen → Language / Taal*. Zonder keuze volgt hij je browser.
+E-mails volgen `HB_LANG` in `.env`. Het woordenboek staat in `static/i18n-en.js`; ontbreekt een tekst, dan blijft die Nederlands.
+Een nieuwe tekst in de code toevoegen? Schrijf hem Nederlands en zet de vertaling in dat bestand (`"Nederlandse tekst": "English text"`, met `{0}`, `{1}` voor variabele delen).
 
 ## Tests en ontwikkelen
 

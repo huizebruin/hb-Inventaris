@@ -1,7 +1,19 @@
+🇳🇱 Nederlands · [🇬🇧 English](CHANGELOG.en.md)
+
 # Changelog
 
 Alle noemenswaardige wijzigingen. Formaat volgens [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/),
 versies volgens [SemVer](https://semver.org/lang/nl/).
+
+## [Onuitgebracht]
+
+### Toegevoegd
+- **Meertalig: Nederlands en Engels.** Kies de taal via *Menu → Instellingen → Language / Taal*. Zonder keuze volgt de app de taal van de browser (Nederlands blijft Nederlands, andere talen krijgen Engels). Het woordenboek staat in `static/i18n-en.js`; teksten die er niet in staan blijven Nederlands, dus aanvullen kan regel voor regel.
+- E-mails (overzicht, backup-alarm, testmail) volgen `HB_LANG=nl|en` in `.env`.
+
+### Gewijzigd
+- Datum- en getalnotatie volgt de gekozen taal.
+- "1 onderdeeleen" in het kastoverzicht is "onderdelen" geworden.
 
 ## [3.9.0] - 2026-10-24
 

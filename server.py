@@ -1979,16 +1979,20 @@ SMTP_FROM   = os.environ.get('SMTP_FROM', '').strip() or SMTP_USER
 MAIL_TO     = [a.strip() for a in re.split(r'[,;]', os.environ.get('HB_EMAIL', '')) if a.strip()]
 MAIL_DIGEST_TIME = os.environ.get('HB_MAIL_DIGEST_TIME', '08:00').strip()      # dagelijks overzicht; leeg = uit
 MAIL_EXPIRY_DAYS = int(os.environ.get('HB_MAIL_EXPIRY_DAYS', '14') or 14)       # verloop binnen zoveel dagen melden
+MAIL_LANG        = 'en' if os.environ.get('HB_LANG', 'nl').strip().lower().startswith('en') else 'nl'   # taal van e-mails
 MAIL_ALERTS      = os.environ.get('HB_MAIL_ALERTS', '1').strip() not in ('0', 'false', 'no', '')   # directe melding bij mislukte backup
 _MAIL_SENT = {}     # dedupe-sleutel -> tijdstip, zodat dezelfde waarschuwing niet steeds opnieuw wordt gestuurd
 MAIL_STATE = {'last_ok': None, 'last_error': None, 'last_error_at': None}
+
+def _l(nl, en):
+    return en if MAIL_LANG == 'en' else nl
 
 def mail_configured():
     return bool(SMTP_HOST and MAIL_TO and SMTP_FROM)
 
 def send_mail(subject, body, dedupe_key=None, dedupe_hours=24, html=None):
     """Verstuurt een e-mail. Gooit een Exception bij falen (de aanroeper beslist wat te doen). Geeft True terug bij succes."""
-    if not mail_configured(): raise RuntimeError('E-mail is niet ingesteld (SMTP_HOST, SMTP_USER en HB_EMAIL ontbreken)')
+    if not mail_configured(): raise RuntimeError(_l('E-mail is niet ingesteld (SMTP_HOST, SMTP_USER en HB_EMAIL ontbreken)', 'Email is not configured (SMTP_HOST, SMTP_USER and HB_EMAIL are missing)'))
     if dedupe_key:
         last = _MAIL_SENT.get(dedupe_key)
         if last and time.time() - last < dedupe_hours * 3600: return False
@@ -2045,18 +2049,20 @@ def build_digest():
     def sect(title, lines):
         parts_t.append(title + '\n' + '\n'.join('  - ' + l for l in lines))
         parts_h.append(f'<h3 style="margin:16px 0 6px">{title}</h3><ul style="margin:0;padding-left:20px">' + ''.join(f'<li>{_esc(l)}</li>' for l in lines) + '</ul>')
-    if probs: sect(f'Systeem ({len(probs)})', [f'{"FOUT" if i["severity"] == "error" else "Let op"}: {i["title"]}' for i in probs])
-    if low: sect(f'Lage voorraad ({len(low)})', [f'{r["name"]}: {r["stock"] or 0} (minimaal {r["minStock"]})' for r in low])
+    if probs: sect(_l(f'Systeem ({len(probs)})', f'System ({len(probs)})'), [f'{_l("FOUT", "ERROR") if i["severity"] == "error" else _l("Let op", "Warning")}: {i["title"]}' for i in probs])
+    if low: sect(_l(f'Lage voorraad ({len(low)})', f'Low stock ({len(low)})'), [f'{r["name"]}: {r["stock"] or 0} ({_l("minimaal", "minimum")} {r["minStock"]})' for r in low])
     if exp:
         def lab(d):
             try: n = (datetime.fromisoformat(d).date() - today).days
             except ValueError: return d
-            return 'verlopen' if n < 0 else 'verloopt vandaag' if n == 0 else f'verloopt over {n} dagen ({d})'
-        sect(f'Verloopdatum ({len(exp)})', [f'{r["name"]}: {lab(r["expiryDate"])}' for r in exp])
-    bits = [x for x in (f'{len(probs)} systeemmelding(en)' if probs else '', f'{len(low)} lage voorraad' if low else '', f'{len(exp)} verloopt' if exp else '') if x]
-    subject = 'Overzicht: ' + ', '.join(bits)
-    text = f'Overzicht van {today:%d-%m-%Y}\n\n' + '\n\n'.join(parts_t) + '\n\nBeheer: Menu → Beheer & gezondheid.'
-    html = '<div style="font-family:system-ui,sans-serif;font-size:14px">' + f'<h2 style="margin:0">Overzicht {today:%d-%m-%Y}</h2>' + ''.join(parts_h) + '<p style="color:#666;margin-top:20px">Beheer: Menu → Beheer &amp; gezondheid.</p></div>'
+            return _l('verlopen', 'expired') if n < 0 else _l('verloopt vandaag', 'expires today') if n == 0 else _l(f'verloopt over {n} dagen ({d})', f'expires in {n} days ({d})')
+        sect(_l(f'Verloopdatum ({len(exp)})', f'Expiry date ({len(exp)})'), [f'{r["name"]}: {lab(r["expiryDate"])}' for r in exp])
+    bits = [x for x in (_l(f'{len(probs)} systeemmelding(en)', f'{len(probs)} system alert(s)') if probs else '', _l(f'{len(low)} lage voorraad', f'{len(low)} low stock') if low else '', _l(f'{len(exp)} verloopt', f'{len(exp)} expiring') if exp else '') if x]
+    subject = _l('Overzicht: ', 'Summary: ') + ', '.join(bits)
+    foot = _l('Beheer: Menu → Beheer & gezondheid.', 'Admin: Menu → Admin & health.')
+    head = _l(f'Overzicht van {today:%d-%m-%Y}', f'Summary for {today:%Y-%m-%d}')
+    text = head + '\n\n' + '\n\n'.join(parts_t) + '\n\n' + foot
+    html = '<div style="font-family:system-ui,sans-serif;font-size:14px">' + f'<h2 style="margin:0">{head}</h2>' + ''.join(parts_h) + f'<p style="color:#666;margin-top:20px">{_esc(foot)}</p></div>'
     return subject, text, html
 
 def _esc(t):
@@ -2065,7 +2071,7 @@ def _esc(t):
 def send_digest(force=False):
     d = build_digest()
     if not d:
-        if force: send_mail('Overzicht: alles in orde', 'Er is niets dat aandacht nodig heeft: voorraad, verloopdatums en systeem zijn in orde.')
+        if force: send_mail(_l('Overzicht: alles in orde', 'Summary: all good'), _l('Er is niets dat aandacht nodig heeft: voorraad, verloopdatums en systeem zijn in orde.', 'Nothing needs attention: stock, expiry dates and system are fine.'))
         return bool(force)
     return send_mail(d[0], d[1], html=d[2])
 
@@ -2095,7 +2101,7 @@ def mail_test():
     body = request.get_json(silent=True) or {}
     try:
         if body.get('digest'): send_digest(force=True)
-        else: send_mail('Testbericht', 'Dit is een testbericht van HB Inventaris. E-mailmeldingen werken.')
+        else: send_mail(_l('Testbericht', 'Test message'), _l('Dit is een testbericht van HB Inventaris. E-mailmeldingen werken.', 'This is a test message from HB Inventaris. Email notifications work.'))
     except Exception as e:
         return jsonify({'error': f'Versturen mislukt: {e}'}), 502
     return jsonify({'ok': True, 'to': MAIL_TO})
@@ -2121,7 +2127,7 @@ def auto_backup():
                     do_backup(); break
                 except Exception as e:
                     if attempt == 2 and MAIL_ALERTS and mail_configured():
-                        send_mail_async('Automatische backup mislukt', f'De dagelijkse backup is na 3 pogingen mislukt:\n\n{e}\n\nControleer schijfruimte en rechten via Menu → Beheer & gezondheid.', dedupe_key='backup_failed', dedupe_hours=12)
+                        send_mail_async(_l('Automatische backup mislukt', 'Automatic backup failed'), _l(f'De dagelijkse backup is na 3 pogingen mislukt:\n\n{e}\n\nControleer schijfruimte en rechten via Menu → Beheer & gezondheid.', f'The daily backup failed after 3 attempts:\n\n{e}\n\nCheck disk space and permissions via Menu → Admin & health.'), dedupe_key='backup_failed', dedupe_hours=12)
                     if BACKUP_STOP.wait(900): return
             BACKUP_STOP.wait(60)
     finally:

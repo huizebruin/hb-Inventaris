@@ -663,7 +663,7 @@ function renderTable() {
     const archived = p.active === false;
     const noteIcon = p.notes ? '<span title="' + p.notes.substring(0, 60).replace(/"/g, '&quot;') + '" style="color:var(--text3);font-size:11px;margin-left:4px;cursor:default">📝</span>' : '';
     const expiryIcon = (() => { const s = getExpiryStatus(p.expiryDate); return s === 'expired' || s === 'critical' ? '<span title="Verloopdatum!" style="font-size:11px;margin-left:4px">⏰</span>' : s === 'warning' ? '<span title="Bijna verlopen" style="font-size:11px;margin-left:4px;opacity:.7">⏰</span>' : ''; })()
-    const lastMod = window._lastModified && window._lastModified[p.id] ? new Date(window._lastModified[p.id]).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) : '';
+    const lastMod = window._lastModified && window._lastModified[p.id] ? new Date(window._lastModified[p.id]).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' }) : '';
     return `<tr tabindex="0" class="${s}${pinned ? ' pinned' : ''}${archived ? ' archived' : ''}" onclick="selPart(${p.id})"
       onmouseenter="showHoverPreview(event,${p.id})" onmouseleave="hideHoverPreview()">
   <td onclick="event.stopPropagation()" style="width:32px;padding:8px 4px 8px 10px"><input type="checkbox" class="row-cb" data-id="${p.id}" onchange="updateBulkBar()" style="cursor:pointer"></td>
@@ -992,7 +992,7 @@ function expiryHtml(dateStr) {
   const d = new Date(dateStr);
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const days = Math.round((d - now) / (1000 * 86400));
-  const fmt = d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+  const fmt = d.toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
   if (days < 0) return `<span style="color:var(--red);font-weight:700">⚠ Verlopen! (${fmt})</span>`;
   if (days === 0) return `<span style="color:var(--red);font-weight:700">⚠ Verloopt vandaag</span>`;
   if (days <= 7) return `<span style="color:var(--red)">⚠ ${fmt} (over ${days}d)</span>`;
@@ -2055,7 +2055,7 @@ const MENU = [
   { id: 'inst', t: 'Instellingen', items: [
     ['⚙', 'Kolommen instellen', 'openColSettings()', 'd'], ['🔄', 'Auto-refresh', 'openRefreshSettings()'],
     ['📡', 'Webhook / HA push', 'openWebhookSettings()'], ['🔗', 'Links & deep-links', 'openLinksPanel()'],
-    ['🔒', 'Alleen-lezen', 'toggleReadOnly()', '', 'js-readonly'], ['❓', 'Help & sneltoetsen', 'openHelp()']] },
+    ['🔒', 'Alleen-lezen', 'toggleReadOnly()', '', 'js-readonly'], ['🌐', 'Language / Taal', 'toggleLang()'], ['❓', 'Help & sneltoetsen', 'openHelp()']] },
 ];
 function mmOpenId() { try { return localStorage.getItem('hb_menu_open') || 'beheer'; } catch (e) { return 'beheer'; } }
 function buildMenus() {
@@ -2222,7 +2222,7 @@ function renderDashBody() {
     html += `<div class="dash-grid" style="margin-bottom:14px">
   <div class="dash-card"><div class="dc-val">${active.length}</div><div class="dc-lbl">Onderdelen</div></div>
   <div class="dash-card"><div class="dc-val">${withStock.length}</div><div class="dc-lbl">Op voorraad</div><div class="dc-sub">${active.length - withStock.length} leeg</div></div>
-  <div class="dash-card"><div class="dc-val" style="color:var(--acc2)">${totalStock.toLocaleString('nl-NL')}</div><div class="dc-lbl">Totaal stuks</div></div>
+  <div class="dash-card"><div class="dc-val" style="color:var(--acc2)">${totalStock.toLocaleString(HB_LOCALE)}</div><div class="dc-lbl">Totaal stuks</div></div>
   <div class="dash-card"><div class="dc-val" style="color:var(--red)">${lowStock.length}</div><div class="dc-lbl">Onder minimum</div></div>
   <div class="dash-card"><div class="dc-val" style="color:var(--green)">€${totalValue.toFixed(2)}</div><div class="dc-lbl">Voorraadwaarde</div></div>
   <div class="dash-card"><div class="dc-val">${noLoc.length}</div><div class="dc-lbl">Zonder locatie</div></div>
@@ -2322,7 +2322,7 @@ function renderDashBody() {
         return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer" onclick="closeDashboard();openProjectsModal();openProjectDetail(' + p.id + ')">'
           + '<span style="color:' + color + ';font-weight:700;min-width:100px">' + label + '</span>'
           + '<span style="flex:1;font-weight:600">' + esc(p.name) + (p.version ? ' <span style="color:var(--acc2);font-size:11px">' + esc(p.version) + '</span>' : '') + '</span>'
-          + '<span style="color:var(--text3);font-size:11px">' + new Date(p.deadline).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) + '</span></div>';
+          + '<span style="color:var(--text3);font-size:11px">' + new Date(p.deadline).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' }) + '</span></div>';
       }).join(''));
     }
 
@@ -2362,8 +2362,8 @@ function renderDashBody() {
         + '<div style="text-align:right;color:var(--text3)">' + (totalB > 0 ? '<b style="color:var(--acc)">' + totalB + 'x</b> gebouwd' : 'Nog niet gebouwd') + '</div>'
         + (cu > 0 ? '<div style="color:var(--acc2)">inkoop \u20ac' + cu.toFixed(2) + '</div>' : '<div></div>')
         + (sell > 0 ? '<div style="text-align:right;color:' + (profit > 0 ? 'var(--green)' : 'var(--text2)') + '">verkoop \u20ac' + sell.toFixed(2) + (profit > 0 ? ' (+' + pPct + '%)' : '') + '</div>' : '<div></div>')
-        + (lastB ? '<div style="color:var(--text3);font-size:10px">' + new Date(lastB.ts).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }) + '</div>' : '<div></div>')
-        + (proj.deadline ? '<div style="text-align:right;font-size:10px;color:var(--text3)">' + new Date(proj.deadline).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) + '</div>' : '<div></div>')
+        + (lastB ? '<div style="color:var(--text3);font-size:10px">' + new Date(lastB.ts).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' }) + '</div>' : '<div></div>')
+        + (proj.deadline ? '<div style="text-align:right;font-size:10px;color:var(--text3)">' + new Date(proj.deadline).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' }) + '</div>' : '<div></div>')
         + '</div></div>';
     }).join('');
     html += dashSection('projcards', 'Alle projecten',
@@ -2380,7 +2380,7 @@ function renderDashBody() {
       + allBuilds.map(h => {
         const rev = (h.sellPrice || 0) * h.qty, prof = rev > 0 && h.cost > 0 ? rev - h.cost : 0;
         return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer" onclick="closeDashboard();openProjectsModal();openProjectDetail(' + (h.projId || 0) + ')">'
-          + '<span style="font-size:11px;color:var(--text3);min-width:75px">' + new Date(h.ts).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }) + '</span>'
+          + '<span style="font-size:11px;color:var(--text3);min-width:75px">' + new Date(h.ts).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' }) + '</span>'
           + '<span style="color:var(--acc);font-weight:700;min-width:28px">' + h.qty + 'x</span>'
           + '<span style="color:var(--text);flex:1">' + esc(h.projName) + (h.projVersion ? ' <span style="color:var(--acc2);font-size:11px">' + esc(h.projVersion) + '</span>' : '') + '</span>'
           + (h.note ? '<span style="color:var(--text2);font-size:11px">' + esc(h.note) + '</span>' : '')
@@ -2639,11 +2639,11 @@ function drawSparkline(history, partId) {
   }).join('');
   // Inkoop markers (delta > 0)
   const inkMarkers = entries.map((h, i) => h.delta > 0
-    ? `<circle cx="${pts[i][0]}" cy="${pts[i][1]}" r="3.5" fill="var(--green)" stroke="var(--bg)" stroke-width="1"><title>+${h.delta} inkoop • ${new Date(h.ts).toLocaleDateString('nl-NL')}: ${h.to} st</title></circle>`
-    : `<circle cx="${pts[i][0]}" cy="${pts[i][1]}" r="2" fill="${col}" opacity="0.6"><title>${h.delta > 0 ? '+' : ''}${h.delta} • ${new Date(h.ts).toLocaleDateString('nl-NL')}: ${h.to} st</title></circle>`
+    ? `<circle cx="${pts[i][0]}" cy="${pts[i][1]}" r="3.5" fill="var(--green)" stroke="var(--bg)" stroke-width="1"><title>+${h.delta} inkoop • ${new Date(h.ts).toLocaleDateString(HB_LOCALE)}: ${h.to} st</title></circle>`
+    : `<circle cx="${pts[i][0]}" cy="${pts[i][1]}" r="2" fill="${col}" opacity="0.6"><title>${h.delta > 0 ? '+' : ''}${h.delta} • ${new Date(h.ts).toLocaleDateString(HB_LOCALE)}: ${h.to} st</title></circle>`
   ).join('');
-  const dateFirst = new Date(entries[0].ts).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
-  const dateLast = new Date(entries[entries.length - 1].ts).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
+  const dateFirst = new Date(entries[0].ts).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' });
+  const dateLast = new Date(entries[entries.length - 1].ts).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' });
   return `<div style="position:relative">
   <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:80px;overflow:visible">
 ${yLabels}
@@ -3058,7 +3058,7 @@ function kastShowVak(vakId, parentKastId) {
   // Header with vak name edit button
   const hdr = document.createElement('div');
   hdr.style.cssText = 'font-size:12px;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between';
-  hdr.innerHTML = `<span>${vakParts.length} onderdeel${vakParts.length === 1 ? '' : 'en'} in ${esc(shortName)}</span>
+  hdr.innerHTML = `<span>${vakParts.length} ${vakParts.length === 1 ? 'onderdeel' : 'onderdelen'} in ${esc(shortName)}</span>
 <button class="abtn" onclick="inlineEditLocInKast('${vakId}')" style="font-size:11px">✏ Naam</button>`;
   container.appendChild(hdr);
 
@@ -3522,7 +3522,7 @@ let orders = [], _currentOrder = null;
 function fmtDate(d) {
   if (!d) return '—';
   const dt = new Date(d);
-  return dt.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+  return dt.toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function daysUntil(d) {
@@ -3808,7 +3808,7 @@ function renderProjectList() {
       const days = Math.round((dl - today) / (1000 * 60 * 60 * 24));
       if (days < 0) { dlClass = ' deadline-over'; deadlineHtml = `<span style="color:var(--red);font-size:11px">⚠ ${Math.abs(days)}d over deadline</span>`; }
       else if (days <= 7) { dlClass = ' deadline-warn'; deadlineHtml = `<span style="color:var(--orange);font-size:11px">⏰ ${days}d</span>`; }
-      else { deadlineHtml = `<span style="color:var(--text3);font-size:11px">📅 ${dl.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })}</span>`; }
+      else { deadlineHtml = `<span style="color:var(--text3);font-size:11px">📅 ${dl.toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' })}</span>`; }
     }
     // Cost
     const cost = calcProjectCost(p);
@@ -3822,7 +3822,7 @@ function renderProjectList() {
     const buildsHtml = builds > 0 ? `<span style="color:var(--text3);font-size:11px">🔨 ${builds}×</span>` : '';
     const bomPct = total > 0 ? Math.round((ready.ok / total) * 100) : 0;
     const bomBar = total > 0 ? `<div style="width:80px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;flex-shrink:0"><div style="height:100%;width:${bomPct}%;background:${ready.missing > 0 ? 'var(--orange)' : 'var(--green)'};transition:width .3s"></div></div>` : '';
-    const createdHtml = p.created ? `<span style="color:var(--text3);font-size:11px">${new Date(p.created).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })}</span>` : '';
+    const createdHtml = p.created ? `<span style="color:var(--text3);font-size:11px">${new Date(p.created).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' })}</span>` : '';
     return `<div class="proj-card${dlClass}" onclick="openProjectDetail(${p.id})">
   <div style="flex:1;min-width:0">
     <div style="font-weight:700;font-size:14px;color:var(--text);margin-bottom:2px">
@@ -3922,7 +3922,7 @@ function renderProjectDetail() {
   ${sellPrice > 0 ? '<span style="color:var(--text2)">verkoop €' + sellPrice.toFixed(2) + '/st</span>' : ''}
   ${profitPerUnit > 0 ? '<span style="color:var(--green);font-weight:600">winst €' + profitPerUnit.toFixed(2) + '/st (' + profitPct + '%)</span>' : ''}
   ${deadlineWarn}
-  ${proj.created ? `<span style="color:var(--text3);font-size:11px">${new Date(proj.created).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })}</span>` : ''}
+  ${proj.created ? `<span style="color:var(--text3);font-size:11px">${new Date(proj.created).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' })}</span>` : ''}
   ${(proj.tags || []).map(t => `<span class="proj-tag">${esc(t)}</span>`).join('')}
   <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
     <input type="number" id="buildQtyInp" value="${buildQty}" min="1" style="width:52px;background:var(--surf);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;padding:3px 6px;text-align:center;outline:none" onchange="updateBuildQty(this.value)" title="Aantal te bouwen">
@@ -3979,7 +3979,7 @@ function renderProjectDetail() {
     html += `<div style="padding:10px 16px 4px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);border-top:2px solid var(--border);margin-top:8px">🔨 Bouw history</div>`;
     html += history.map((h, idx) => ({ h, idx })).reverse().map(({ h, idx }) => `
   <div class="build-row">
-    <span style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:11px">${new Date(h.ts).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+    <span style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:11px">${new Date(h.ts).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
     <span style="color:var(--acc);font-weight:700">${h.qty}×</span>
     <span style="color:var(--text3);font-size:11px">${esc(h.note || '')}</span>
     ${h.cost > 0 ? `<span style="color:var(--green);font-size:11px">€${h.cost.toFixed(2)}</span>` : ''}
@@ -4129,7 +4129,7 @@ function printPakbon(proj, buildEntry) {
   const qty = buildEntry.qty || 1;
   const ts = new Date(buildEntry.ts);
   const nr = 'PB-' + proj.id + '-' + ts.getFullYear() + ('0' + (ts.getMonth() + 1)).slice(-2) + ('0' + ts.getDate()).slice(-2) + '-' + String(Math.floor(Math.random() * 9000) + 1000);
-  const dateStr = ts.toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' });
+  const dateStr = ts.toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'long', year: 'numeric' });
   const cost = buildEntry.cost || 0;
   const sell = (proj.sellPrice || 0) * qty;
   const rows = (proj.items || []).map(item => {
@@ -4656,7 +4656,7 @@ function fmtTs(ts) {
   if (diff < 3600) return `${Math.floor(diff / 60)} min geleden`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} uur geleden`;
   if (diff < 604800) return `${Math.floor(diff / 86400)} dag${Math.floor(diff / 86400) === 1 ? '' : 'en'} geleden`;
-  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function fmtDelta(delta) {
@@ -4915,7 +4915,7 @@ h1{font-size:16pt;margin-bottom:4px}
 @media print{body{margin:10mm}}
   ${'</'}style>${'</'}head><body>
   <h1>${kastDef.icon || '📦'} ${kastDef.name}</h1>
-  <div class="sub">Geprint op ${new Date().toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' })}</div>`);
+  <div class="sub">Geprint op ${new Date().toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'long', year: 'numeric' })}</div>`);
 
   allChildren.sort((a, b) => (LOCS[a] || '').localeCompare(LOCS[b] || '', 'nl')).forEach(vakId => {
     const vakName = LOCS[vakId] || String(vakId);
@@ -5094,7 +5094,7 @@ function generatePackingSlip() {
   const to = document.getElementById('packTo').value;
   const ref = document.getElementById('packRef').value;
   const note = document.getElementById('packNote').value;
-  const date = new Date().toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' });
+  const date = new Date().toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'long', year: 'numeric' });
 
   let items = [];
   if (source.startsWith('proj-')) {
@@ -5209,7 +5209,7 @@ function buildWeeklyActivity(history) {
     const d = new Date(h.ts);
     const mon = new Date(d); mon.setDate(d.getDate() - d.getDay() + 1);
     const key = mon.toISOString().slice(0, 10);
-    if (!weeks[key]) weeks[key] = { in: 0, out: 0, label: mon.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) };
+    if (!weeks[key]) weeks[key] = { in: 0, out: 0, label: mon.toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' }) };
     if (h.delta > 0) weeks[key].in += h.delta;
     else weeks[key].out += Math.abs(h.delta);
   });

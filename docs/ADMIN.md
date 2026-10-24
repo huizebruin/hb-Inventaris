@@ -1,3 +1,5 @@
+🇳🇱 Nederlands · [🇬🇧 English](ADMIN.en.md)
+
 # Beheer & gezondheid
 
 Open via **Menu → Beheer → Beheer & gezondheid**. Tabs: Overzicht, Gezondheid, Back-ups, Import/export, Media, Logboek.

@@ -24,11 +24,15 @@ jobs:
           [ "$TAG" = "$APP" ] || { echo "::error::Tag $TAG komt niet overeen met APP_VERSION $APP in server.py"; exit 1; }
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Release-notities uit CHANGELOG.md
+      - name: Release-notities (NL + EN) uit de changelogs
         run: |
           V="${{ steps.ver.outputs.version }}"
-          awk -v v="$V" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
-          [ -s notes.md ] || { echo "::error::Geen sectie [$V] in CHANGELOG.md"; exit 1; }
+          sect() { awk -v v="$V" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' "$1"; }
+          sect CHANGELOG.md > nl.md
+          sect CHANGELOG.en.md > en.md
+          [ -s nl.md ] || { echo "::error::Geen sectie [$V] in CHANGELOG.md"; exit 1; }
+          [ -s en.md ] || { echo "::error::No section [$V] in CHANGELOG.en.md"; exit 1; }
+          { echo "## 🇬🇧 English"; cat en.md; echo; echo "---"; echo; echo "## 🇳🇱 Nederlands"; cat nl.md; } > notes.md
           cat notes.md
 
       - name: Zip maken

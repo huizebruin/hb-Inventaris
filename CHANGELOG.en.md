@@ -5,7 +5,7 @@
 All notable changes. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [3.9.1] - 2026-10-24
 
 ### Added
 - **Multilingual: Dutch and English.** Choose the language via *Menu → Settings → Language / Taal*. Without a choice, the app follows the browser language (Dutch stays Dutch, other languages get English). The dictionary lives in `static/i18n-en.js`; texts that are not in it stay Dutch, so it can be extended line by line.
@@ -14,6 +14,9 @@ versions follow [SemVer](https://semver.org/).
 ### Changed
 - Date and number formatting follows the selected language.
 - "1 onderdeeleen" in the cabinet overview has been corrected to "onderdelen".
+
+### Upgrading from 3.9.0
+No database migration needed. Rebuild (`docker compose up -d --build`); when copying files by hand, include `static/i18n.js` and `static/i18n-en.js` too.
 
 ## [3.9.0] - 2026-10-24
 

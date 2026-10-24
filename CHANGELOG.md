@@ -5,7 +5,7 @@
 Alle noemenswaardige wijzigingen. Formaat volgens [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/),
 versies volgens [SemVer](https://semver.org/lang/nl/).
 
-## [Onuitgebracht]
+## [3.9.1] - 2026-10-24
 
 ### Toegevoegd
 - **Meertalig: Nederlands en Engels.** Kies de taal via *Menu → Instellingen → Language / Taal*. Zonder keuze volgt de app de taal van de browser (Nederlands blijft Nederlands, andere talen krijgen Engels). Het woordenboek staat in `static/i18n-en.js`; teksten die er niet in staan blijven Nederlands, dus aanvullen kan regel voor regel.
@@ -14,6 +14,9 @@ versies volgens [SemVer](https://semver.org/lang/nl/).
 ### Gewijzigd
 - Datum- en getalnotatie volgt de gekozen taal.
 - "1 onderdeeleen" in het kastoverzicht is "onderdelen" geworden.
+
+### Upgraden van 3.9.0
+Geen databasemigratie nodig. Bouw opnieuw (`docker compose up -d --build`); bij handmatig kopiëren ook `static/i18n.js` en `static/i18n-en.js` meenemen.
 
 ## [3.9.0] - 2026-10-24
 

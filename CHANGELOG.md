@@ -20,6 +20,7 @@ versies volgens [SemVer](https://semver.org/lang/nl/).
 - **Centrale validatie** van API-invoer: ongeldige invoer geeft `400` met `{error, fields}`.
 - **Schema-versiebeheer** met migratiesysteem (`meta.schemaVersion`), automatische back-up vóór migraties.
 - **Tests en CI**: pytest-suite, ruff-lint en Docker-build in GitHub Actions; release-workflow.
+- **E-mailmeldingen** (server-side, via `SMTP_*` en `HB_EMAIL`): dagelijks overzicht met lage voorraad, bijna verlopen en systeemmeldingen (alleen als er iets te melden is), directe mail bij mislukte backup, testknoppen in Beheer.
 - `docs/DEPLOYMENT.md`: reverse proxy (Caddy/nginx), firewall, checklist, Samba-tips.
 
 ### Gewijzigd

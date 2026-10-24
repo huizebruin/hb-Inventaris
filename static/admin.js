@@ -67,8 +67,8 @@
       <div class="adm-bar ${dk.level}"><i style="width:${Math.min(100, dk.percent)}%"></i></div></div>`).join('') +
       `<div class="adm-note">Waarschuwing vanaf ${st.thresholds.warn_pct}% gebruikt of minder dan ${st.thresholds.warn_free_mb} MB vrij (HB_DISK_WARN_PCT / HB_DISK_WARN_FREE_MB). Back-ups: ${SZ(st.backup_size)} in ${st.backup_files} bestanden · logboek ${SZ(st.log_size)}.</div>`;
     html += `<div class="acts" style="display:flex;gap:8px;flex-wrap:wrap">${lv ? `<a class="btn sec sm" href="/api/backups/${E(lv.name)}" download>↓ Download nieuwste backup</a>` : ''}
-      <button class="btn sm" data-act="mkbackup">💾 Nu backup maken</button><button class="btn sec sm" data-act="tab" data-arg="ov">↻ Vernieuwen</button></div>
-      <div class="adm-note" style="margin-top:14px">Python ${E(s.python)} · Flask ${E(s.flask)} · SQLite ${E(s.sqlite)} · Pillow ${s.pillow ? 'ja' : 'nee'} · openpyxl ${s.openpyxl ? 'ja' : 'nee'} · AI ${s.gemini_configured ? 'aan' : 'uit'} · Telegram ${s.telegram_configured ? 'aan' : 'uit'} · beheer-token ${s.admin_token_required ? 'vereist' : 'niet ingesteld'} · login ${s.auth_enabled ? 'aan' : 'uit (alleen LAN!)'}</div>`;
+      <button class="btn sm" data-act="mkbackup">💾 Nu backup maken</button>${s.mail_configured ? `<button class="btn sec sm" data-act="mailtest">✉ Testmail</button><button class="btn sec sm" data-act="maildigest">✉ Overzicht nu mailen</button>` : ''}<button class="btn sec sm" data-act="tab" data-arg="ov">↻ Vernieuwen</button></div>
+      <div class="adm-note" style="margin-top:14px">Python ${E(s.python)} · Flask ${E(s.flask)} · SQLite ${E(s.sqlite)} · Pillow ${s.pillow ? 'ja' : 'nee'} · openpyxl ${s.openpyxl ? 'ja' : 'nee'} · AI ${s.gemini_configured ? 'aan' : 'uit'} · Telegram ${s.telegram_configured ? 'aan' : 'uit'} · e-mail ${s.mail_configured ? 'aan (overzicht ' + E(s.mail_digest_time || 'uit') + ')' : 'uit'} · beheer-token ${s.admin_token_required ? 'vereist' : 'niet ingesteld'} · login ${s.auth_enabled ? 'aan' : 'uit (alleen LAN!)'}</div>`;
     $('admBody').innerHTML = html;
   }
 
@@ -245,7 +245,7 @@
       <div class="adm-card"><div class="l">Logbestand</div><div class="v">${SZ(d.summary.file_size)}</div><div class="s">rotatie: ${d.summary.rotation.max_mb} MB × ${d.summary.rotation.backups}</div></div></div>`;
     if (cats.length) h += `<div class="adm-note">Per categorie (24u): ${cats.map(c => `<b>${E(c)}</b> ${d.summary.by_category[c].errors} fouten / ${d.summary.by_category[c].warnings} waarschuwingen`).join(' · ')}</div>`;
     h += `<div class="adm-filters"><select data-f="level">${[['info', 'Alles'], ['warning', 'Waarschuwingen+'], ['error', 'Alleen fouten']].map(([v, l]) => `<option value="${v}" ${logF.level === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <select data-f="category"><option value="">Alle categorieën</option>${['app', 'db', 'media', 'upload', 'backup', 'restore', 'repair', 'import', 'export', 'ai', 'startup', 'admin', 'auth'].map(c => `<option ${logF.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <select data-f="category"><option value="">Alle categorieën</option>${['app', 'db', 'media', 'upload', 'backup', 'restore', 'repair', 'import', 'export', 'ai', 'startup', 'admin', 'auth', 'mail'].map(c => `<option ${logF.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
       <input data-f="q" placeholder="Zoek in logboek…" value="${E(logF.q)}"><a class="btn sec sm" href="/api/admin/logs/download" download>↓ Logbestand</a></div>`;
     h += d.entries.length ? `<table class="adm-tbl adm-log">${d.entries.map(e => `<tr class="${e.level}"><td style="white-space:nowrap">${e.ts}</td><td>${e.level}</td><td>${E(e.category)}</td><td>${E(e.message)}</td></tr>`).join('')}</table>` : '<div class="adm-ok">Geen meldingen</div>';
     $('admBody').innerHTML = h;
@@ -269,6 +269,7 @@
       else if (a === 'items') { const box = $('admItems' + arg); box.hidden = !box.hidden; if (!box.innerHTML) box.innerHTML = lastIssues[arg].items.map(i => `<div>${itemLine(i)}</div>`).join('') + (lastIssues[arg].count > lastIssues[arg].items.length ? `<div>… en ${lastIssues[arg].count - lastIssues[arg].items.length} meer</div>` : ''); }
       else if (a === 'open') { closeAdmin(); if (typeof selPart === 'function') selPart(parseInt(arg)); }
       else if (a === 'repair') await doRepair(arg);
+      else if (a === 'mailtest' || a === 'maildigest') { const r = await api('/api/admin/mail/test', 'POST', a === 'maildigest' ? { digest: true } : {}); T('✉ Verstuurd naar ' + r.to.join(', ')); go(tab); }
       else if (a === 'mkbackup') { await api('/api/backups', 'POST'); T('✓ Backup gemaakt en gecontroleerd'); go(tab); }
       else if (a === 'verify') { const r = await api(`/api/backups/${encodeURIComponent(arg)}/verify`, 'POST'); T(r.ok ? `✓ ${arg} is geldig (${r.counts.parts} onderdelen)` : '⚠ ' + r.errors.join('; ')); }
       else if (a === 'restore') await doRestore(arg);

@@ -61,3 +61,14 @@ en media-opruiming achter een token te zetten (de app vraagt er eenmalig om).
 Bestanden die je rechtstreeks in `media/` zet (ook in submappen, bijv. via een Samba-share) verschijnen in het Mediabeheer.
 Onder *Beheer → Media* zie je ze apart (“Extern geplaatst”), met een controle op nep-extensies. Ze worden **nooit automatisch**
 verwijderd; verwijderen kan alleen bewust met de aparte knop. Zie ook [DEPLOYMENT.md](DEPLOYMENT.md#5-mediamap-delen-via-samba-bestanden-van-buiten-plaatsen).
+
+## E-mailmeldingen
+
+Zet in `.env`: `SMTP_HOST`, `SMTP_PORT` (587 STARTTLS of 465 SSL), `SMTP_USER`, `SMTP_PASS` en `HB_EMAIL` (ontvanger, meerdere met komma), en start de container opnieuw.
+Optioneel `SMTP_FROM`, `HB_MAIL_DIGEST_TIME`, `HB_MAIL_EXPIRY_DAYS`, `HB_MAIL_ALERTS` (zie `.env.example`).
+
+- **Dagelijks overzicht** (standaard 08:00): lage voorraad, bijna verlopen en systeemmeldingen. Er wordt alleen gemaild als er iets te melden is.
+- **Backup mislukt**: directe mail na drie mislukte pogingen (max. 1 per 12 uur).
+- *Beheer → Overzicht* heeft knoppen voor een testmail en om het overzicht meteen te versturen. Fouten staan in het logboek (categorie `mail`).
+
+Het wachtwoord staat alleen in `.env`; de app toont het nergens.

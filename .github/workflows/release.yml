@@ -42,4 +42,4 @@ jobs:
         env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
         run: |
           V="${{ steps.ver.outputs.version }}"
-          gh release create "$GITHUB_REF_NAME" dist/* --title "HB Inventaris $V" --notes-file notes.md --verify-tag
+          gh release create "$GITHUB_REF_NAME" dist/* --title "HB Inventaris $V" --notes-file notes.md --target "$GITHUB_SHA"

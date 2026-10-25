@@ -5,12 +5,16 @@
 Alle noemenswaardige wijzigingen. Formaat volgens [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/),
 versies volgens [SemVer](https://semver.org/lang/nl/).
 
-## [Onuitgebracht]
+## [3.9.2] - 2026-10-25
 
 ### Toegevoegd
+- **Nieuw onderdeel via foto:** *Menu → Beheer → Nieuw onderdeel via foto*. Maak een foto, Gemini herkent het onderdeel en telt het aantal (aangegeven als *geteld* of *geschat*). Aantal en foto kun je met één klik overnemen. Waarschuwt als er meerdere soorten op de foto staan. Vereist `GEMINI_API_KEY`.
 - **Updatemelding:** de app kijkt elke 12 uur bij GitHub naar een nieuwere release en meldt dat in het belletje, in Beheer en in het dagelijkse overzicht per e-mail. Tab *Updates* met release-notities.
 - **Zelf bijwerken** (niet bij Docker): downloadt de release, controleert SHA-256, paden en inhoud, maakt eerst een back-up van database en programmacode, past toe, herstart en zet bij een fout automatisch terug. Zie `docs/ADMIN.md#updates`.
 - Instellingen `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` en `HB_UPDATE_REPO`.
+
+### Gewijzigd
+- De controle *Prijsregels met een leverancier die niet (meer) bestaat* legt nu uit wat er aan de hand is, vergelijkt ID's tolerant (tekst "3" = getal 3, lege waarden worden genegeerd) en heeft een herstelknop die de verwijzende regels verwijdert (met voorbeeld, automatische back-up en logboek).
 
 ### Upgraden van 3.9.1
 Geen databasemigratie. Bouw opnieuw (`docker compose up -d --build`) of kopieer de nieuwe bestanden.

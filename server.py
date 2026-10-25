@@ -22,7 +22,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from werkzeug.exceptions import HTTPException
 
-APP_VERSION = '3.9.1'
+APP_VERSION = '3.9.2'
 APP_BUILD = os.environ.get('HB_BUILD', 'dev')
 START_TIME = time.time()
 START_DT = datetime.now(timezone.utc)
@@ -989,7 +989,9 @@ Beschikbare categorieën (ID: Naam), kies de best passende:
 {cat_list}
 
 Antwoord ALLEEN met een geldig JSON-object, zonder markdown-opmaak:
-{{"name": "<korte herkenbare naam, bv. '10k Ohm weerstand' of 'ESP32-WROOM-32 module'>", "value": "<waarde indien van toepassing, leeg als n.v.t.>", "brand": "<merk indien zichtbaar/herkenbaar, anders leeg>", "package": "<behuizing/package die je op de foto ziet>", "extra_info": "<overige zichtbare specs, opdruk/tekst, kleurcodes, bijzonderheden — kort>", "category_id": <best passende categorie-ID uit de lijst hierboven, of null>, "confidence": "hoog, gemiddeld of laag", "found": true of false}}
+{{"name": "<korte herkenbare naam, bv. '10k Ohm weerstand' of 'ESP32-WROOM-32 module'>", "value": "<waarde indien van toepassing, leeg als n.v.t.>", "brand": "<merk indien zichtbaar/herkenbaar, anders leeg>", "package": "<behuizing/package die je op de foto ziet>", "extra_info": "<overige zichtbare specs, opdruk/tekst, kleurcodes, bijzonderheden — kort>", "category_id": <best passende categorie-ID uit de lijst hierboven, of null>, "confidence": "hoog, gemiddeld of laag", "quantity": <aantal losse stuks van dit onderdeel dat je op de foto ziet, als geheel getal, of null>, "quantity_basis": "geteld, geschat of onbekend", "multiple_types": true of false, "found": true of false}}
+
+Regels voor het aantal: tel alleen stuks die je echt kunt onderscheiden. Zie je ze allemaal duidelijk, zet quantity_basis op "geteld". Liggen ze door elkaar of deels over elkaar, geef dan je beste schatting met "geschat". Zijn het er niet te tellen (rol, zakje vol, lint, bulk, onderdelen die verborgen zijn) of staat er maar een deel van de voorraad op, zet quantity op null en quantity_basis op "onbekend". Staat er een aantal op het etiket of de verpakking (bv. "100 pcs"), gebruik dat en zet "geteld". Staan er meerdere SOORTEN onderdelen op de foto, zet multiple_types op true en beschrijf alleen het duidelijkste of grootste soort.
 
 Als je het onderdeel niet met voldoende zekerheid kunt identificeren, zet found op false en laat de overige velden leeg. Verzin niets dat je niet op de foto kunt zien."""
 
@@ -1005,7 +1007,18 @@ Als je het onderdeel niet met voldoende zekerheid kunt identificeren, zet found 
     if cat_id is not None and cat_id not in cat_by_id:
         cat_id = None
 
+    qty = parsed.get('quantity')
+    try:
+        qty = int(float(qty)) if qty is not None and not isinstance(qty, bool) else None
+    except (TypeError, ValueError):
+        qty = None
+    if qty is not None and not (0 <= qty <= 100000): qty = None
+    basis = str(parsed.get('quantity_basis', '') or '').strip().lower()
+    if basis not in ('geteld', 'geschat'): qty = None; basis = 'onbekend'
     return jsonify({
+        'quantity':        qty,
+        'quantity_basis':  basis,
+        'multiple_types':  bool(parsed.get('multiple_types', False)),
         'name':          str(parsed.get('name', '') or ''),
         'value':         str(parsed.get('value', '') or ''),
         'brand':         str(parsed.get('brand', '') or ''),
@@ -2544,7 +2557,8 @@ def find_bad_refs(db, ctx):
         bad = [x for x in _jlist(r['related']) if isinstance(x, (int, str)) and
                (not str(x).lstrip('-').isdigit() or int(x) not in ctx['part_ids'] or int(x) == r['id'])]
         if bad: related_bad.append({'id': r['id'], 'name': r['name'], 'bad': bad})
-        bad = [x.get('suppId') for x in _jlist(r['suppliers']) if isinstance(x, dict) and x.get('suppId') not in ctx['supp_ids']]
+        bad = [x.get('suppId') for x in _jlist(r['suppliers']) if isinstance(x, dict) and x.get('suppId') not in (None, '')
+               and str(x.get('suppId')) not in {str(i) for i in ctx['supp_ids']}]   # "3" en 3 zijn dezelfde leverancier; een regel zonder leverancier is geen fout
         if bad: supp_bad.append({'id': r['id'], 'name': r['name'], 'bad': bad})
     return cat_bad, loc_bad, extra_bad, related_bad, supp_bad
 
@@ -2644,8 +2658,13 @@ def run_checks(db, include_media=True):
                                        repair='clean_extra_locs', inspect='parts'))
     if related_bad: issues.append(_issue('invalid_related', 'info', 'Gerelateerde onderdelen die niet bestaan', related_bad,
                                          repair='clean_related', inspect='parts'))
-    if supp_bad: issues.append(_issue('invalid_suppliers', 'info', 'Leveranciersregels met een leverancier die niet bestaat', supp_bad,
-                                      inspect='parts', detail='Alleen melden; controleer de prijzen handmatig.'))
+    if supp_bad:
+        ids = sorted({str(b) for x in supp_bad for b in x['bad']})
+        n_lines = sum(len(x['bad']) for x in supp_bad)
+        issues.append(_issue('invalid_suppliers', 'info', 'Prijsregels met een leverancier die niet (meer) bestaat', supp_bad, repair='clean_suppliers', inspect='parts',
+                             detail=f'{n_lines} regel(s) bij {len(supp_bad)} onderdeel/onderdelen verwijzen naar leverancier-ID {", ".join(ids[:8])}{"…" if len(ids) > 8 else ""}, die niet in je leverancierslijst staat. '
+                                    'Er gaat niets kapot: die regels tonen alleen geen leveranciersnaam. Oplossen: maak de leverancier opnieuw aan (Menu → Leveranciers) '
+                                    'of verwijder die regels met de knop hieronder (eerst een voorbeeld; er wordt vooraf een back-up gemaakt). De prijs en link in die regels gaan dan verloren.'))
     oc = find_orphan_categories(db, ctx)
     if oc: issues.append(_issue('orphan_categories', 'warning', 'Categorieën met een hoofdcategorie die niet bestaat', oc,
                                 repair='fix_orphan_categories', detail='Herstellen maakt ze hoofdcategorie.'))
@@ -2730,6 +2749,17 @@ def _rep_clean_list_field(field, bad_idx):
         return {'affected': [b['id'] for b in bad], 'changes': len(bad)}
     return run
 
+def _rep_clean_suppliers(db, ctx, apply):
+    known = {str(i) for i in ctx['supp_ids']}
+    affected = []
+    for r in db.execute('SELECT id,name,suppliers FROM parts').fetchall():
+        lines = _jlist(r['suppliers'])
+        keep = [x for x in lines if not (isinstance(x, dict) and x.get('suppId') not in (None, '') and str(x.get('suppId')) not in known)]
+        if len(keep) != len(lines):
+            affected.append({'id': r['id'], 'name': r['name'], 'removed': [x for x in lines if x not in keep]})
+            if apply: db.execute('UPDATE parts SET suppliers=? WHERE id=?', (json.dumps(keep), r['id']))
+    return {'affected': [a['id'] for a in affected], 'changes': sum(len(a['removed']) for a in affected), 'details': affected[:50]}
+
 def _rep_fix_orphan_categories(db, ctx, apply):
     oc = find_orphan_categories(db, ctx)
     if apply:
@@ -2779,6 +2809,7 @@ REPAIRS = {
     'clear_invalid_location': ('Ongeldige locaties leegmaken', _rep_clear_invalid_location),
     'clean_extra_locs': ('Ongeldige extra locaties verwijderen', _rep_clean_list_field('extraLocs', 2)),
     'clean_related': ('Ongeldige gerelateerde onderdelen verwijderen', _rep_clean_list_field('related', 3)),
+    'clean_suppliers': ('Regels met onbekende leverancier verwijderen', _rep_clean_suppliers),
     'fix_orphan_categories': ('Wees-categorieën hoofdcategorie maken', _rep_fix_orphan_categories),
     'merge_duplicate_locations': ('Dubbele locaties samenvoegen', _rep_merge_duplicate_locations),
     'clear_broken_media': ('Ontbrekende foto-/documentverwijzingen wissen', _rep_clear_broken_media),

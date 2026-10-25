@@ -5,12 +5,16 @@
 All notable changes. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [3.9.2] - 2026-10-25
 
 ### Added
+- **New part from a photo:** *Menu → Admin → New part via photo*. Take a photo, Gemini identifies the part and counts the quantity (marked *counted* or *estimated*). Take over quantity and photo with one click. Warns when several types are in the photo. Requires `GEMINI_API_KEY`.
 - **Update notification:** every 12 hours the app checks GitHub for a newer release and tells you in the bell, in Admin and in the daily email digest. *Updates* tab with release notes.
 - **Self-update** (not with Docker): downloads the release, verifies SHA-256, paths and contents, first backs up the database and program code, applies it, restarts and rolls back automatically on error. See `docs/ADMIN.en.md#updates`.
 - Settings `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` and `HB_UPDATE_REPO`.
+
+### Changed
+- The check *Price lines with a supplier that no longer exists* now explains the problem, compares IDs tolerantly (text "3" = number 3, empty values ignored) and has a repair button that removes the referencing lines (with preview, automatic backup and log).
 
 ### Upgrading from 3.9.1
 No database migration. Rebuild (`docker compose up -d --build`) or copy the new files.

@@ -1483,7 +1483,7 @@ function openAiLookup() {
   document.getElementById('aiPhotoFile').value = '';
   document.getElementById('aiResult').innerHTML = '';
   document.getElementById('aiApplyBtn').style.display = 'none';
-  _aiLookupResult = null;
+  _aiLookupResult = null; _aiPhotoFile = null;
   document.getElementById('aiOvl').classList.add('open');
   setTimeout(() => document.getElementById('aiQuery').focus(), 100);
 }
@@ -1513,20 +1513,37 @@ async function runAiLookup() {
   }
 }
 
+let _aiPhotoFile = null;
+// Verkleint een foto vóór het versturen (telefoonfoto's zijn vaak 5–10 MB; Gemini heeft genoeg aan ±1600 px)
+function shrinkForAi(file, maxPx = 1600) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onerror = () => rej(new Error('Kon foto niet lezen'));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => res({ b64: String(fr.result).split(',')[1], mime: file.type || 'image/jpeg' });   // onbekend formaat: ongewijzigd proberen
+      img.onload = () => {
+        const ratio = Math.min(maxPx / img.width, maxPx / img.height, 1);
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * ratio); c.height = Math.round(img.height * ratio);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        res({ b64: c.toDataURL('image/jpeg', 0.88).split(',')[1], mime: 'image/jpeg' });
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
 async function handleAiPhoto(input) {
   const file = input.files[0];
   if (!file) return;
+  _aiPhotoFile = file;
   const resultEl = document.getElementById('aiResult');
   document.getElementById('aiApplyBtn').style.display = 'none';
   resultEl.innerHTML = '<p style="color:var(--text2);font-size:12px">⏳ Foto analyseren…</p>';
   try {
-    const b64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result.split(',')[1]);
-      r.onerror = () => rej(new Error('Kon foto niet lezen'));
-      r.readAsDataURL(file);
-    });
-    const r = await api('/api/ai/photo-lookup', 'POST', { image_base64: b64, mime_type: file.type || 'image/jpeg' });
+    const { b64, mime } = await shrinkForAi(file);
+    const r = await api('/api/ai/photo-lookup', 'POST', { image_base64: b64, mime_type: mime });
     _aiLookupResult = r;
     renderAiResult(r);
   } catch (e) {
@@ -1536,18 +1553,34 @@ async function handleAiPhoto(input) {
   }
 }
 
+// Nieuw onderdeel beginnen met een foto: formulier open, camera/fotokeuze direct erachter
+function newFromPhoto() {
+  openAdd(); openAiLookup();
+  setTimeout(() => document.getElementById('aiPhotoFile').click(), 250);
+}
+
 function renderAiResult(r) {
   const resultEl = document.getElementById('aiResult');
   const curDesc = document.getElementById('peDesc').value || '';
   const curLink = document.getElementById('peLink').value || '';
   const curName = document.getElementById('peName').value || '';
-  const hasAny = r.value || r.brand || r.package || r.datasheet_url || r.extra_info || r.name || r.category_id;
+  const curStock = parseInt(document.getElementById('peStock').value) || 0;
+  const hasAny = r.value || r.brand || r.package || r.datasheet_url || r.extra_info || r.name || r.category_id || r.quantity != null;
   if (!r.found && !hasAny) {
     resultEl.innerHTML = '<p style="color:var(--text3);font-size:12px">Geen specificaties gevonden. Pas de zoekterm aan of probeer een duidelijkere foto.</p>';
     return;
   }
   resultEl.innerHTML = `
   <div style="display:flex;flex-direction:column;gap:10px">
+    ${r.multiple_types ? `<div style="font-size:12px;color:var(--orange,#e8a33d)">⚠ Er staan meerdere soorten onderdelen op de foto. Hieronder staat alleen het duidelijkste soort; maak per soort een aparte foto voor het beste resultaat.</div>` : ''}
+    ${r.quantity != null ? `<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;cursor:pointer;font-weight:normal">
+      <input type="checkbox" id="aiUseQty" ${curStock > 0 ? '' : 'checked'} style="width:16px;height:16px;margin-top:1px">
+      <span><b>Aantal:</b> ${r.quantity} stuks (${r.quantity_basis === 'geteld' ? 'geteld' : 'geschat — controleer even'})<br><span style="color:var(--text3)">${curStock > 0 ? 'vervangt de huidige voorraad (' + curStock + ')' : 'wordt ingevuld als Voorraad'}</span></span>
+    </label>` : (r.found ? `<div style="font-size:12px;color:var(--text3)">Aantal: niet te bepalen op de foto — vul de voorraad zelf in.</div>` : '')}
+    ${_aiPhotoFile ? `<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;cursor:pointer;font-weight:normal">
+      <input type="checkbox" id="aiUsePhoto" ${document.getElementById('peImg').value ? '' : 'checked'} style="width:16px;height:16px;margin-top:1px">
+      <span><b>Foto:</b> deze foto ook als onderdeelfoto gebruiken<br><span style="color:var(--text3)">${document.getElementById('peImg').value ? 'vervangt de huidige foto' : 'er is nog geen foto'}</span></span>
+    </label>` : ''}
     ${r.name ? `<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;cursor:pointer;font-weight:normal">
       <input type="checkbox" id="aiUseName" ${curName ? '' : 'checked'} style="width:16px;height:16px;margin-top:1px">
       <span><b>Naam:</b> ${esc(r.name)}<br><span style="color:var(--text3)">${curName ? 'vervangt huidige naam: ' + esc(curName) : 'wordt ingevuld als Naam'}</span></span>
@@ -1592,6 +1625,12 @@ function applyAiLookup() {
   }
   if (r.category_id && document.getElementById('aiUseCategory')?.checked) {
     document.getElementById('peCat').value = r.category_id;
+  }
+  if (r.quantity != null && document.getElementById('aiUseQty')?.checked) {
+    document.getElementById('peStock').value = r.quantity;
+  }
+  if (_aiPhotoFile && document.getElementById('aiUsePhoto')?.checked) {
+    try { const dt = new DataTransfer(); dt.items.add(_aiPhotoFile); const f = document.getElementById('imgFile'); f.files = dt.files; handleImg(f); } catch (e) { }
   }
   const parts = [];
   if (r.value && document.getElementById('aiUseValue')?.checked) parts.push(`Waarde: ${r.value}`);
@@ -2047,7 +2086,7 @@ const MENU = [
     ['📊', 'Dashboard', 'openDashboard()'], ['📋', 'Bestellen', 'openOrderList()'],
     ['📜', 'Geschiedenis', 'openHistModal()'], ['📦', 'Archief', 'toggleArchived()']] },
   { id: 'beheer', t: 'Beheer', items: [
-    ['🗄', 'Kasten', 'openKastModal()'], ['📍', 'Locaties', 'openLocModal()'], ['📷', 'Scanner (camera)', 'openScanOvl()', 'd'],
+    ['📷', 'Nieuw onderdeel via foto', 'newFromPhoto()'], ['🗄', 'Kasten', 'openKastModal()'], ['📍', 'Locaties', 'openLocModal()'], ['📷', 'Scanner (camera)', 'openScanOvl()', 'd'],
     ['🩺', 'Beheer & gezondheid', 'openAdmin()'], ['🗂', 'Categorieën', 'openCatManager()'], ['🏪', 'Leveranciers', 'openSuppModal()'],
     ['🖼', 'Media', 'openMediaModal()'], ['🔗', 'Projecten / BOM', 'openProjectsModal()'],
     ['📦', 'Inkooporders', 'openOrdersModal()']] },

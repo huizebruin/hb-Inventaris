@@ -86,3 +86,17 @@ def test_invalid_order_and_project_are_400(client):
     assert client.post('/api/projects', json={}).status_code == 400
     assert client.post('/api/orders', json={'items': 'geen lijst'}).status_code == 400
 
+
+
+def test_qr_libraries_are_local_and_no_external_qr_service(client):
+    for f in ('qrcode-generator.js', 'jsqr.js'):
+        r = client.get('/vendor/' + f)
+        assert r.status_code == 200 and len(r.data) > 10000
+    assert client.get('/vendor/../server.py').status_code == 404
+    html = client.get('/').get_data(as_text=True) + client.get('/app.js').get_data(as_text=True)
+    assert 'qrserver.com' not in html and 'qrcodejs' not in html
+
+
+def test_csv_exports_use_real_line_breaks(client):
+    js = client.get('/app.js').get_data(as_text=True)
+    assert 'function csvDownload' in js and "join('\\r\\n')" in js

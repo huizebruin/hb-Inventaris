@@ -74,6 +74,14 @@ verwijderen) zit onder **⋯ Meer**.
 
 <img src="docs/screenshots/bulk-desktop.png" alt="Bulk-balk met Locatie, Categorie, Voorraad en het Meer-menu" width="100%">
 
+## Scannen, labels en bestellen
+
+- **QR-codes en labels.** *Menu → Labels printen* maakt per onderdeel een label met QR-code (opent het onderdeel); *Locatielabels printen* maakt een label per bak, kast of lade. Scan je dat label, dan zie je alleen de onderdelen op die plek. De QR-codes worden lokaal in je browser getekend: ze werken offline en er gaat niets naar een externe QR-dienst.
+- **Scannen met de telefooncamera.** *Menu → Scanner*. Chrome/Android scant ook streepjescodes; op iPhone/Safari en Firefox wordt automatisch de ingebouwde QR-lezer gebruikt (alleen QR). Camera vraagt https of localhost.
+- **Herkennen via foto** (vereist `GEMINI_API_KEY`). In de scanner: *Herken via foto*. Gemini beschrijft wat je ziet en de app zoekt de beste treffers in je voorraad, met knoppen om er direct een aantal af of bij te boeken (het getelde aantal staat al ingevuld). Bij *Nieuw onderdeel via foto* verschijnen meerdere soorten op één foto als aparte voorstellen; elk kun je met één klik als nieuw onderdeel toevoegen.
+- **Bestellijst** (*Menu → Bestellen*). Combineert onderdelen onder de minimumvoorraad met de tekorten uit de projecten (BOM) die je aanvinkt, kiest per onderdeel één leverancier (de goedkoopste of de eerste) en groepeert per leverancier. Per leverancier: CSV, *SKU;aantal* kopiëren (plakbaar in de bulk-bestelfunctie van veel webshops) en alle productlinks openen.
+- **Voorraadwaarde en prijzen.** *Dashboard → Voorraad* toont de voorraadwaarde in de tijd (dagelijks vastgelegd; het verleden wordt eenmalig geschat uit de mutatiegeschiedenis en gestippeld getoond). Wijzigt de prijs bij een leverancier met minstens `HB_PRICE_ALERT_PCT` procent (standaard 10), dan krijg je een melding in het belletje en in het dagelijkse e-mailoverzicht.
+
 ## Meldingen en menu
 
 **Meldingen:** de losse badges in de header zijn vervangen door één bel met

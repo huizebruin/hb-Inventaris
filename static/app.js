@@ -413,7 +413,11 @@ function filtered(opts = {}) {
   let l = _showArchived ? parts : parts.filter(p => p.active !== false);
   if (srch.trim()) {
     const q = srch.toLowerCase().trim();
-    if (q.startsWith('#')) {
+    const lq = /^#loc:(\d+)$/.exec(q);
+    if (lq) {
+      // Locatie-filter (QR van een bak/kast of ?loc=ID): hoofdlocatie of extra locatie
+      l = l.filter(p => String(p.locId) === lq[1] || (p.extraLocs || []).map(String).includes(lq[1]));
+    } else if (q.startsWith('#')) {
       const tag = q.slice(1);
       l = l.filter(p => (p.tags || []).some(t => t.includes(tag)));
     } else {
@@ -1181,6 +1185,16 @@ const scanUI = () => document.getElementById('scanOvl')?.classList.contains('ope
   : { video: 'qrVideo', result: 'qrResult', btn: 'qrStartBtn', log: 'scanLog', ovl: false };
 const scanEl = (u, k) => document.getElementById(u[k]);
 
+let _jsqrP = null;
+function loadJsQR() {
+  if (window.jsQR) return Promise.resolve();
+  return _jsqrP || (_jsqrP = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = '/vendor/jsqr.js';
+    sc.onload = () => res(); sc.onerror = () => { _jsqrP = null; rej(new Error('jsQR')); };
+    document.head.appendChild(sc);
+  }));
+}
+
 async function startScan() {
   stopScan();
   const u = scanUI(), video = scanEl(u, 'video'), resultEl = scanEl(u, 'result');
@@ -1204,8 +1218,22 @@ async function startScan() {
         } catch (e) { }
       }, 300);
     } else {
-      resultEl.textContent = 'Deze browser kan niet automatisch scannen. Typ of scan de code hieronder.';
-      resultEl.style.display = '';
+      // Geen BarcodeDetector (o.a. iPhone/Safari, Firefox): lokale jsQR-decoder, alleen QR-codes
+      try { await loadJsQR(); } catch (e) {
+        resultEl.textContent = 'Deze browser kan niet automatisch scannen. Typ of scan de code hieronder.';
+        resultEl.style.display = '';
+        return;
+      }
+      const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
+      _scanInterval = setInterval(() => {
+        if (_scanBusy || video.readyState !== video.HAVE_ENOUGH_DATA || !video.videoWidth) return;
+        const sc = Math.min(1, 640 / video.videoWidth);
+        cv.width = Math.round(video.videoWidth * sc); cv.height = Math.round(video.videoHeight * sc);
+        cx.drawImage(video, 0, 0, cv.width, cv.height);
+        const img = cx.getImageData(0, 0, cv.width, cv.height);
+        const code = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+        if (code && code.data) handleScanResult(code.data);
+      }, 250);
     }
   } catch (e) {
     toast('⚠ Geen cameratoegang: ' + e.message);
@@ -1217,6 +1245,56 @@ function stopScan() {
   if (_scanStream) { _scanStream.getTracks().forEach(t => t.stop()); _scanStream = null; }
   ['qrVideo', 'sqVideo'].forEach(id => { const v = document.getElementById(id); if (v) v.srcObject = null; });
   ['qrStartBtn', 'sqStartBtn'].forEach(id => { const b = document.getElementById(id); if (b) b.textContent = '▶ Camera starten'; });
+}
+
+// Onderdeel herkennen via foto (bv. bij uitnemen): Gemini beschrijft het, wij zoeken de beste treffers in de eigen voorraad
+async function scanByPhoto(input) {
+  const file = input.files[0]; if (!file) return;
+  const resultEl = document.getElementById('sqResult');
+  stopScan();
+  resultEl.style.display = ''; resultEl.textContent = '⏳ Foto analyseren…';
+  try {
+    const { b64, mime } = await shrinkForAi(file);
+    const r = await api('/api/ai/photo-lookup', 'POST', { image_base64: b64, mime_type: mime });
+    const items = [r, ...(r.others || [])].filter(x => x && x.name);
+    if (!items.length) { resultEl.textContent = 'Niets herkend op de foto.'; return; }
+    window._photoHits = [];
+    let html = '';
+    items.forEach((it, gi) => {
+      const q = [it.name, it.value].filter(Boolean).join(' ');
+      const toks = _srchNorm(q.toLowerCase()).trim().split(/\s+/).filter(Boolean);
+      // Eerst alle woorden samen; lukt dat niet, dan scoort een onderdeel op het aantal woorden dat klopt
+      const act = parts.filter(p => p.active !== false);
+      let hits = act.map(p => ({ p, sc: fuzzyMatch(p, q.toLowerCase(), toks) })).filter(x => x.sc > 0);
+      if (!hits.length) hits = act.map(p => ({ p, sc: toks.reduce((n, t) => n + (fuzzyMatch(p, t, [t]) > 0 ? 1 : 0), 0) })).filter(x => x.sc > 0);
+      hits = hits.sort((a, b) => b.sc - a.sc).slice(0, 4);
+      const n = it.quantity || 1;
+      html += `<div style="margin:6px 0 2px"><b>${esc(it.name)}</b>${it.value ? ' · ' + esc(it.value) : ''}${it.quantity != null ? ` <span style="color:var(--text3)">(${it.quantity} st ${it.quantity_basis === 'geteld' ? 'geteld' : 'geschat'})</span>` : ''}</div>`;
+      if (!hits.length) html += '<div style="color:var(--text3);font-size:12px">Geen overeenkomst in je voorraad.</div>';
+      hits.forEach(h => {
+        const k = window._photoHits.push(h.p.id) - 1;
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px">
+          <span style="flex:1;min-width:0">${esc(h.p.name)} <span style="color:var(--text3)">· ${h.p.stock || 0} st · ${esc(loc(h.p.locId))}</span></span>
+          <button class="btn sec" style="font-size:11px" onclick="photoHitOpen(${k})">Open</button>
+          <input type="number" id="phq${k}" value="${n}" min="1" style="width:52px;font-size:11px" aria-label="Aantal">
+          <button class="btn sec" style="font-size:11px" onclick="photoHitAdj(${k},-1)">−</button>
+          <button class="btn sec" style="font-size:11px" onclick="photoHitAdj(${k},1)">+</button></div>`;
+      });
+    });
+    resultEl.innerHTML = html;
+  } catch (e) { resultEl.textContent = '⚠ ' + e.message; }
+  finally { input.value = ''; }
+}
+function photoHitOpen(k) { closeScanOvl(); setTimeout(() => selPart(window._photoHits[k]), 200); }
+async function photoHitAdj(k, sign) {
+  const id = window._photoHits[k], p = parts.find(x => x.id === id); if (!p) return;
+  const n = Math.max(1, parseInt(document.getElementById('phq' + k).value) || 1);
+  try {
+    const r = await api(`/api/parts/${id}/stock`, 'PATCH', { delta: sign * n });
+    p.stock = r.stock; renderTable();
+    if (typeof paintQty === 'function') paintQty(p);
+    toast(`${sign > 0 ? '+' : '−'}${n} ${p.name} → ${r.stock}`);
+  } catch (e) { toast('⚠ ' + e.message); }
 }
 
 // Venster onderin: open met één tik, camera start direct
@@ -1610,11 +1688,34 @@ function renderAiResult(r) {
       <input type="checkbox" id="aiUseExtra" checked style="width:16px;height:16px;margin-top:1px">
       <span><b>Overige info:</b> ${esc(r.extra_info)}<br><span style="color:var(--text3)">wordt toegevoegd aan Notities</span></span>
     </label>` : ''}
+    ${(r.others || []).length ? `<div style="border-top:1px solid var(--border);padding-top:8px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:6px">Ook op de foto (${r.others.length})</div>
+      ${r.others.map((o, i) => `<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0">
+        <div style="flex:1;min-width:0"><b>${esc(o.name)}</b>${o.quantity != null ? ` · ${o.quantity} st (${o.quantity_basis === 'geteld' ? 'geteld' : 'geschat'})` : ''}
+        <div style="color:var(--text3);font-size:11px">${esc([o.value, o.brand, o.package].filter(Boolean).join(' · '))}</div></div>
+        <button class="btn sec" id="aiOther${i}" style="font-size:11px;white-space:nowrap" onclick="aiAddOther(${i})">➕ Als nieuw onderdeel</button></div>`).join('')}
+    </div>` : ''}
     <div style="font-size:11px;color:var(--text3);border-top:1px solid var(--border);padding-top:8px">
       Huidige beschrijving: ${curDesc ? esc(curDesc) : '<i>leeg</i>'}
     </div>
   </div>`;
   document.getElementById('aiApplyBtn').style.display = '';
+}
+
+// Een extra soort van dezelfde foto direct als eigen onderdeel aanmaken (aantal en categorie meegenomen)
+async function aiAddOther(i) {
+  const o = (_aiLookupResult?.others || [])[i], btn = document.getElementById('aiOther' + i);
+  if (!o || !btn || btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const created = await api('/api/parts', 'POST', {
+      name: o.name, desc: [o.value, o.brand, o.package].filter(Boolean).join(' · '),
+      stock: o.quantity || 0, catId: o.category_id || null, notes: o.extra_info || '', active: true
+    });
+    parts.push(created); renderSidebar(); renderTable();
+    btn.textContent = '✓ Toegevoegd';
+    toast('✓ ' + o.name + ' toegevoegd — controleer locatie en aantal');
+  } catch (e) { btn.disabled = false; toast('⚠ ' + e.message); }
 }
 
 function applyAiLookup() {
@@ -1906,6 +2007,7 @@ async function savePart() {
       parts.push(created);
     }
     closePart(); renderSidebar(); renderTable(); toast(id ? 'Opgeslagen' : 'Onderdeel toegevoegd');
+    loadPriceAlerts();
   } catch (e) { toast('⚠ Fout: ' + e.message); }
   finally { btn.disabled = false; btn.textContent = 'Opslaan'; }
 }
@@ -2026,12 +2128,13 @@ function alertCounts() {
   }).length;
   const sug = (window._suggestions || []).length;
   const upd = window._update && window._update.available ? 1 : 0;
+  const price = (window._priceAlerts || []).length;
   const zero = active.filter(p => (p.stock || 0) === 0).length;
-  return { low, exp, sug, zero, upd };
+  return { low, exp, sug, zero, upd, price };
 }
 function updateAlertCenter() {
   const c = alertCounts();
-  const total = c.low + c.exp + c.sug + c.upd;
+  const total = c.low + c.exp + c.sug + c.upd + c.price;
   const el = document.getElementById('alertCount');
   if (!el) return;
   el.hidden = total === 0;
@@ -2047,6 +2150,7 @@ function renderAlertPop() {
   if (c.low) h += row('low', '⚠', 'Lage voorraad', c.low, 'is-red');
   if (c.exp) h += row('exp', '⏰', 'Verloopt binnenkort', c.exp, 'is-orange');
   if (c.sug) h += row('sug', '💡', 'Suggesties', c.sug, 'is-green');
+  if (c.price) h += row('price', '📈', 'Prijsstijgingen', c.price, 'is-orange');
   if (c.upd) h += row('upd', '⬆', 'Nieuwe versie ' + window._update.latest, 1, 'is-green');
   if (!h) h = '<div class="alert-empty">Alles in orde ✓</div>';
   h += '<div class="alert-sep"></div>';
@@ -2074,6 +2178,10 @@ function alertGo(key) {
   else if (key === 'sug') openSuggestions();
   else if (key === 'zero') toggleZeroStock();
   else if (key === 'upd') openAdmin('upd');
+  else if (key === 'price') openDashboard('voorraad');
+}
+async function loadPriceAlerts() {
+  try { const r = await (await fetch('/api/prices/changes')).json(); window._priceAlerts = r.items || []; window._priceMinPct = r.min_pct; updateAlertCenter(); } catch (e) { }
 }
 async function loadUpdateInfo() {
   try { window._update = await (await fetch('/api/update')).json(); updateAlertCenter(); } catch (e) { }
@@ -2091,7 +2199,7 @@ const MENU = [
     ['🖼', 'Media', 'openMediaModal()'], ['🔗', 'Projecten / BOM', 'openProjectsModal()'],
     ['📦', 'Inkooporders', 'openOrdersModal()']] },
   { id: 'print', t: 'Afdrukken & export', items: [
-    ['🏷', 'Labels printen', 'openPrintModal()'], ['📋', 'Pakbon', 'openPackingSlip()'],
+    ['🏷', 'Labels printen', 'openPrintModal()'], ['📍', 'Locatielabels printen', "openPrintModal(null,null,'locations')"], ['📋', 'Pakbon', 'openPackingSlip()'],
     ['📦', 'Verpakkingsteller', 'openPackagingCounter()'], ['📤', 'Exporteren', 'openExport()'],
     ['📊', 'Excel export', 'exportExcel()']] },
   { id: 'data', t: 'Gegevens', items: [
@@ -2167,7 +2275,12 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAlerts(); });
 
 // ── DASHBOARD ─────────────────────────────────────────────────
-function openDashboard() {
+function openDashboard(tab) {
+  if (typeof tab === 'string' && document.getElementById('dtab-' + tab)) {
+    _dashTab = tab;
+    document.querySelectorAll('.dash-tab').forEach(b => b.classList.remove('active'));
+    document.getElementById('dtab-' + tab).classList.add('active');
+  }
   renderDashboard();
   document.getElementById('dashOvl').classList.add('open');
 }
@@ -2286,6 +2399,15 @@ function renderDashBody() {
   }
 
   if (_dashTab === 'voorraad') {
+    if (!_valueStats || _valueStats.days !== _valueDays) loadValueStats(_valueDays);
+    html += dashSection('valuechart', '💶 Voorraadwaarde in de tijd', valueChartHtml());
+    const pa = window._priceAlerts || [];
+    html += dashSection('priceup', '📈 Prijsstijgingen' + (pa.length ? ' (' + pa.length + ')' : ''), pa.length
+      ? pa.map(i => '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer" onclick="closeDashboard();selPart(' + i.partId + ')">'
+        + '<span style="color:var(--red);font-weight:700;font-family:\'JetBrains Mono\',monospace;width:56px;text-align:right">+' + i.pct + '%</span>'
+        + '<span style="flex:1;min-width:0">' + esc(i.part) + (i.supplier ? ' <span style="color:var(--text3)">· ' + esc(i.supplier) + '</span>' : '') + '</span>'
+        + '<span style="color:var(--text3);font-family:\'JetBrains Mono\',monospace">€' + i.prev.toFixed(2) + ' → €' + i.price.toFixed(2) + '</span></div>').join('')
+      : '<p style="color:var(--green);font-size:12px">✓ Geen prijsstijgingen van ' + (window._priceMinPct ?? 10) + '% of meer in de afgelopen weken</p>');
     html += dashSection('lowstock', '⚠ Lage voorraad',
       lowList.length
         ? lowList.map(p => '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer" onclick="closeDashboard();selPart(' + p.id + ')">'
@@ -2445,84 +2567,154 @@ function renderDashBody() {
   document.getElementById('dashBody').innerHTML = html;
 }
 
+// ── CSV ────────────────────────────────────────────────────────
+// Eén plek voor CSV-export: CRLF-regels, aanhalingstekens en bescherming tegen formules in Excel (=, +, -, @)
+function csvCell(c) {
+  let v = c == null ? '' : String(c);
+  if (typeof c === 'string' && /^[=+\-@\t\r]/.test(v)) v = "'" + v;
+  return '"' + v.replace(/"/g, '""') + '"';
+}
+function csvDownload(filename, rows) {
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }));
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
 // ── ORDER LIST ─────────────────────────────────────────────────
+// Bron: onderdelen onder de minimumvoorraad + (optioneel) tekorten uit gekozen projecten (BOM).
+// Per onderdeel kiest de lijst één leverancier (goedkoopste of eerste), zodat niets dubbel besteld wordt.
+let _ordProjects = new Set(), _ordPick = 'cheapest';
+
 function openOrderList() {
   renderOrderList();
   document.getElementById('orderOvl').classList.add('open');
 }
 function closeOrderList() { document.getElementById('orderOvl').classList.remove('open'); }
 
+function orderLines() {
+  const demand = new Map(), why = new Map();
+  parts.forEach(p => {
+    if (p.active !== false && p.minStock > 0) { demand.set(p.id, p.minStock); why.set(p.id, ['minimum']); }
+  });
+  const perProj = new Map();
+  projects.filter(pr => _ordProjects.has(pr.id)).forEach(pr => (pr.items || []).forEach(it => {
+    perProj.set(it.partId, (perProj.get(it.partId) || 0) + (it.qty || 0));
+    (why.get(it.partId) || (why.set(it.partId, []), why.get(it.partId))).push(pr.name);
+  }));
+  perProj.forEach((q, id) => demand.set(id, Math.max(demand.get(id) || 0, q)));
+  const out = [];
+  demand.forEach((target, id) => {
+    const p = parts.find(x => x.id === id); if (!p) return;
+    const need = target - (p.stock || 0);
+    if (need <= 0) return;
+    const lines = (p.suppliers || []).filter(se => se && se.suppId != null && se.suppId !== '');
+    let se = null;
+    if (lines.length) {
+      se = _ordPick === 'first' ? lines[0] : [...lines].sort((a, b) => (a.price > 0 ? a.price : 1e12) - (b.price > 0 ? b.price : 1e12))[0];
+    }
+    out.push({ p, need, se, why: why.get(id) || [] });
+  });
+  return out.sort((a, b) => a.p.name.localeCompare(b.p.name, 'nl'));
+}
+
+function orderGroups() {
+  const g = new Map();
+  orderLines().forEach(l => {
+    const k = l.se ? String(l.se.suppId) : '_none';
+    if (!g.has(k)) g.set(k, []);
+    g.get(k).push(l);
+  });
+  return g;
+}
+
+function ordSetProj(id, on) { on ? _ordProjects.add(id) : _ordProjects.delete(id); renderOrderList(); }
+function ordSetPick(v) { _ordPick = v; renderOrderList(); }
+
 function renderOrderList() {
-  const low = parts.filter(p => p.active !== false && p.minStock > 0 && (p.stock || 0) < p.minStock)
-    .sort((a, b) => ((a.stock || 0) - a.minStock) - ((b.stock || 0) - b.minStock));
-  document.getElementById('orderCount').textContent = `${low.length} onderdelen`;
-  if (!low.length) {
-    document.getElementById('orderBody').innerHTML = '<div class="empty"><div class="big">✅</div><p>Alles op voorraad!</p></div>';
+  const groups = orderGroups();
+  const count = [...groups.values()].reduce((n, a) => n + a.length, 0);
+  document.getElementById('orderCount').textContent = `${count} onderdelen`;
+  const projs = projects.filter(pr => (pr.items || []).length && pr.status !== 'klaar');
+  document.getElementById('orderOpts').innerHTML =
+    'Onderdelen onder de minimumvoorraad' + (projs.length ? ', plus tekorten uit project(en):' : '.')
+    + (projs.length ? '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px">' + projs.map(pr =>
+      `<label style="display:flex;gap:5px;align-items:center;font-weight:normal;cursor:pointer"><input type="checkbox" ${_ordProjects.has(pr.id) ? 'checked' : ''} onchange="ordSetProj(${pr.id},this.checked)"> ${esc(pr.name)}</label>`).join('') + '</div>' : '')
+    + `<div style="margin-top:6px">Leverancier kiezen: <select onchange="ordSetPick(this.value)" style="font-size:12px"><option value="cheapest" ${_ordPick === 'cheapest' ? 'selected' : ''}>goedkoopste</option><option value="first" ${_ordPick === 'first' ? 'selected' : ''}>eerste in het onderdeel</option></select></div>`;
+  if (!count) {
+    document.getElementById('orderBody').innerHTML = '<div class="empty"><div class="big">✅</div><p>Niets te bestellen!</p></div>';
     return;
   }
-  // Group by supplier
-  const bySuppId = {};
-  low.forEach(p => {
-    const suppEntries = p.suppliers?.length ? p.suppliers : [{ suppId: null }];
-    suppEntries.forEach(se => {
-      const k = se.suppId || '_none';
-      if (!bySuppId[k]) bySuppId[k] = [];
-      bySuppId[k].push({ p, se });
-    });
-  });
-
-  let html = '';
-  Object.entries(bySuppId).forEach(([suppId, items]) => {
-    const s = suppId !== '_none' ? suppById(parseInt(suppId)) : null;
+  let html = '', grand = 0;
+  [...groups.entries()].sort((a, b) => (a[0] === '_none') - (b[0] === '_none')).forEach(([k, items]) => {
+    const s = k !== '_none' ? suppById(parseInt(k)) : null;
+    const total = items.reduce((t, l) => t + (l.se?.price > 0 ? l.se.price * l.need : 0), 0);
+    grand += total;
     html += `<div style="border-bottom:2px solid var(--border)">
-  <div style="padding:8px 16px;background:var(--surf2);display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text)">
+  <div style="padding:8px 16px;background:var(--surf2);display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:700;color:var(--text)">
     ${s ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(s.color || '#888')}"></span>` : ''}
     ${s ? esc(s.name) : 'Geen leverancier'}
-    ${s?.url ? `<a href="${esc(s.url)}" target="_blank" style="font-size:10px;color:var(--acc2);font-weight:400">↗ ${esc(s.url.replace('https://', ''))}</a>` : ''}
+    <span style="font-weight:400;color:var(--text3)">${items.length} regels${total > 0 ? ' · €' + total.toFixed(2) : ''}</span>
+    ${s?.url && /^https?:/i.test(s.url) ? `<a href="${esc(s.url)}" target="_blank" rel="noopener" style="font-size:10px;color:var(--acc2);font-weight:400">↗ ${esc(s.url.replace(/^https?:\/\//, ''))}</a>` : ''}
+    <span style="margin-left:auto;display:flex;gap:4px">
+      <button class="btn sec" style="font-size:10px;padding:2px 6px" onclick="exportOrderCSV('${k}')">⬇ CSV</button>
+      <button class="btn sec" style="font-size:10px;padding:2px 6px" onclick="copyOrderLines('${k}')">📋 SKU;aantal</button>
+      <button class="btn sec" style="font-size:10px;padding:2px 6px" onclick="openOrderLinks('${k}')">🔗 Open links</button>
+    </span>
   </div>`;
-    items.forEach(({ p, se }) => {
-      const need = p.minStock - (p.stock || 0);
+    items.forEach(({ p, need, se, why }) => {
       html += `<div style="display:grid;grid-template-columns:1fr 60px 70px 80px 60px;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border);font-size:12px">
     <div>
       <div style="font-weight:600;color:var(--text)">${esc(p.name)}</div>
-      ${se.sku ? `<div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${esc(se.sku)}</div>` : ''}
+      ${se?.sku ? `<div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${esc(se.sku)}</div>` : ''}
+      ${why.some(w => w !== 'minimum') ? `<div style="font-size:10px;color:var(--text3)">voor: ${esc(why.filter(w => w !== 'minimum').join(', '))}</div>` : ''}
     </div>
-    <div style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--red)">${p.stock || 0}/${p.minStock}</div>
+    <div style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--red)">${p.stock || 0}/${Math.max(p.minStock || 0, (p.stock || 0) + need)}</div>
     <div style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--acc)">+${need} nodig</div>
-    <div style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${se.price ? `€${se.price.toFixed(2)}<span style="font-size:10px;color:var(--text3)"> p/st</span><br><span style="color:var(--green);font-size:11px">€${(se.price * need).toFixed(2)} totaal</span>` : '—'}</div>
-    <div style="text-align:right">${se.link || p.link ? `<a href="${esc(se.link || p.link)}" target="_blank" class="abtn" style="font-size:10px">🔗 Bestel</a>` : ''}</div>
+    <div style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${se?.price > 0 ? `€${se.price.toFixed(2)}<span style="font-size:10px;color:var(--text3)"> p/st</span><br><span style="color:var(--green);font-size:11px">€${(se.price * need).toFixed(2)} totaal</span>` : '—'}</div>
+    <div style="text-align:right">${(se?.link || p.link) && /^https?:/i.test(se?.link || p.link) ? `<a href="${esc(se?.link || p.link)}" target="_blank" rel="noopener" class="abtn" style="font-size:10px">🔗 Bestel</a>` : ''}</div>
   </div>`;
     });
     html += '</div>';
   });
+  if (grand > 0) html += `<div style="padding:10px 16px;text-align:right;font-size:12px;font-weight:700">Totaal: €${grand.toFixed(2)}</div>`;
   document.getElementById('orderBody').innerHTML = html;
 }
+
+function _ordItems(k) { return k ? (orderGroups().get(k) || []) : [...orderGroups().values()].flat(); }
 
 function printOrderList() {
   window.print();
 }
 
-function exportOrderCSV() {
-  const low = parts.filter(p => p.active !== false && p.minStock > 0 && (p.stock || 0) < p.minStock)
-    .sort((a, b) => a.name.localeCompare(b.name));
-  if (!low.length) { toast('Niets te bestellen'); return; }
+function exportOrderCSV(k) {
+  const items = _ordItems(k);
+  if (!items.length) { toast('Niets te bestellen'); return; }
   const rows = [['Naam', 'IPN', 'SKU', 'Leverancier', 'Nodig', 'Prijs/st', 'Totaal', 'BestelLink']];
-  low.forEach(p => {
-    const ses = p.suppliers?.length ? p.suppliers : [{}];
-    ses.forEach(se => {
-      const supp = se.suppId ? suppById(se.suppId) : null;
-      const need = p.minStock - (p.stock || 0);
-      const tot = se.price ? (se.price * need).toFixed(2) : '';
-      rows.push([p.name, p.IPN || '', se.sku || '', supp?.name || '', need, se.price ? se.price.toFixed(2) : '', tot, se.link || p.link || '']);
-    });
+  items.forEach(({ p, need, se }) => {
+    const supp = se?.suppId ? suppById(se.suppId) : null;
+    rows.push([p.name, p.IPN || '', se?.sku || '', supp?.name || '', need,
+      se?.price > 0 ? se.price.toFixed(2) : '', se?.price > 0 ? (se.price * need).toFixed(2) : '', se?.link || p.link || '']);
   });
-  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'bestellijst-' + new Date().toISOString().slice(0, 10) + '.csv';
-  a.click();
+  const sn = k && k !== '_none' ? (suppById(parseInt(k))?.name || 'leverancier') : (k ? 'zonder-leverancier' : 'alles');
+  csvDownload('bestellijst-' + sn.replace(/[^\w-]+/g, '-') + '-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
   toast('CSV gedownload');
+}
+
+// Regels "SKU;aantal" om in te plakken in de bulk-bestelfunctie van veel webshops (Mouser, LCSC, TME, …)
+function copyOrderLines(k) {
+  const items = _ordItems(k);
+  const lines = items.map(({ p, need, se }) => `${se?.sku || p.IPN || p.name};${need}`).join('\n');
+  navigator.clipboard?.writeText(lines).then(() => toast(`📋 ${items.length} regels gekopieerd`)).catch(() => toast('⚠ Kopiëren mislukt'));
+}
+
+function openOrderLinks(k) {
+  const urls = [...new Set(_ordItems(k).map(({ p, se }) => se?.link || p.link).filter(u => /^https?:\/\//i.test(u || '')))];
+  if (!urls.length) { toast('Geen productlinks bij deze regels'); return; }
+  urls.slice(0, 10).forEach(u => window.open(u, '_blank', 'noopener'));
+  toast(urls.length > 10 ? `10 van ${urls.length} links geopend` : `${urls.length} link(s) geopend`);
 }
 
 // ── EXPORT ─────────────────────────────────────────────────────
@@ -2657,6 +2849,39 @@ function inlineStockEdit(e, id) {
     if (e2.key === 'Escape') { renderTable(); }
     e2.stopPropagation();
   });
+}
+
+// ── VOORRAADWAARDE IN DE TIJD ─────────────────────────────────
+let _valueStats = null, _valueDays = 90;
+async function loadValueStats(days) {
+  _valueDays = days;
+  try { _valueStats = Object.assign(await api('/api/stats/value?days=' + days), { days }); }
+  catch (e) { _valueStats = { days, points: [], current: { value: 0 }, error: e.message }; }
+  renderDashBody();
+}
+function setValueDays(d) { _valueStats = null; loadValueStats(d); }
+function valueChartHtml() {
+  const st = _valueStats;
+  const btns = [30, 90, 365].map(d => `<button class="btn sec" style="font-size:11px;padding:2px 8px;${d === _valueDays ? 'border-color:var(--acc);color:var(--acc)' : ''}" onclick="setValueDays(${d})">${d === 365 ? '1 jaar' : d + ' dagen'}</button>`).join(' ');
+  if (!st) return '<div style="display:flex;gap:6px;margin-bottom:8px">' + btns + '</div><p style="color:var(--text3);font-size:12px">⏳ Laden…</p>';
+  const pts = st.points || [];
+  if (pts.length < 2) return '<div style="display:flex;gap:6px;margin-bottom:8px">' + btns + '</div><p style="color:var(--text3);font-size:12px">Nog te weinig meetpunten. De waarde wordt dagelijks vastgelegd; zodra er mutaties in de geschiedenis staan wordt het verleden ook geschat.</p>';
+  const W = 560, H = 140, padL = 46, padR = 12, padT = 10, padB = 18;
+  const vals = pts.map(p => p.value), min = Math.min(...vals), max = Math.max(...vals), lo = Math.max(0, min - (max - min) * 0.1), hi = max + (max - min) * 0.1 || max + 1;
+  const X = i => padL + i / (pts.length - 1) * (W - padL - padR), Y = v => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+  const seg = (a, b) => pts.slice(a, b + 1).map((p, k) => `${X(a + k).toFixed(1)},${Y(p.value).toFixed(1)}`).join(' ');
+  const firstReal = pts.findIndex(p => !p.estimated);
+  const cut = firstReal < 0 ? pts.length - 1 : firstReal;
+  const grid = [lo, (lo + hi) / 2, hi].map(v => `<line x1="${padL}" y1="${Y(v)}" x2="${W - padR}" y2="${Y(v)}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="3,3"/><text x="${padL - 5}" y="${Y(v) + 3}" font-size="9" fill="var(--text3)" text-anchor="end">€${Math.round(v)}</text>`).join('');
+  const fmt = d => new Date(d).toLocaleDateString(HB_LOCALE, { day: 'numeric', month: 'short' });
+  const last = pts[pts.length - 1], first = pts[0], diff = last.value - first.value;
+  const dots = pts.length <= 60 ? pts.map((p, i) => `<circle cx="${X(i)}" cy="${Y(p.value)}" r="2" fill="${p.estimated ? 'var(--text3)' : 'var(--acc)'}"><title>${fmt(p.day)}: €${p.value.toFixed(2)}${p.estimated ? ' (schatting)' : ''}</title></circle>`).join('') : '';
+  return `<div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">${btns}<span style="margin-left:auto;font-size:12px">Nu <b style="color:var(--green)">€${last.value.toFixed(2)}</b> <span style="color:${diff >= 0 ? 'var(--green)' : 'var(--red)'}">${diff >= 0 ? '+' : '−'}€${Math.abs(diff).toFixed(2)}</span></span></div>
+  <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible" role="img" aria-label="Voorraadwaarde in de tijd">${grid}
+    ${cut > 0 ? `<polyline points="${seg(0, cut)}" fill="none" stroke="var(--text3)" stroke-width="2" stroke-dasharray="4,3"/>` : ''}
+    <polyline points="${seg(cut, pts.length - 1)}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round"/>${dots}
+    <text x="${padL}" y="${H - 3}" font-size="9" fill="var(--text3)">${fmt(first.day)}</text><text x="${W - padR}" y="${H - 3}" font-size="9" fill="var(--text3)" text-anchor="end">${fmt(last.day)}</text></svg>
+  <div style="font-size:10px;color:var(--text3);margin-top:4px">${pts.some(p => p.estimated) ? 'Gestippeld = geschat uit de mutatiegeschiedenis met de huidige prijzen. ' : ''}Berekend met de laagste leveranciersprijs per onderdeel.</div>`;
 }
 
 // ── SPARKLINE VOORRAAD ────────────────────────────────────────
@@ -3211,7 +3436,6 @@ function buildPartsList(list, vakId = null, parentKastId = null) {
 
 // ── QR LABEL PRINTING ────────────────────────────────────────
 // Uses qrcodegen library (pure JS, no dependencies)
-const QR_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
 let _qrLoaded = false;
 let _selectedLabels = new Set();
 let _printParts = [];
@@ -3225,28 +3449,26 @@ function loadQRLib() {
   });
 }
 
-// Simple QR code generator using canvas + fetch to a QR API
-// Works offline via a tiny inline QR lib
-function makeQR(text, canvas, size) {
-  // Use Google Charts QR API as primary (needs internet)
-  // Fallback: draw text placeholder
-  const ctx = canvas.getContext('2d');
-  canvas.width = size; canvas.height = size;
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = () => { ctx.drawImage(img, 0, 0, size, size); };
-  img.onerror = () => {
-    // Fallback: draw simple grid pattern as placeholder
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size, size);
+// QR-codes worden lokaal getekend (static/vendor/qrcode-generator.js): werkt offline en er gaat niets naar externe diensten.
+function qrDraw(canvas, text, size, margin = 2) {
+  try {
+    qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+    const qr = qrcode(0, 'M'); qr.addData(String(text), 'Byte'); qr.make();
+    const n = qr.getModuleCount(), cell = Math.max(1, Math.floor(size / (n + margin * 2))), px = cell * (n + margin * 2);
+    canvas.width = canvas.height = px;
+    canvas.style.width = canvas.style.height = size + 'px';
+    canvas.style.imageRendering = 'pixelated';
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, px, px);
     ctx.fillStyle = '#000';
-    ctx.font = `${Math.floor(size / 8)}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText('QR', size / 2, size / 2 + 4);
-  };
-  img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}&format=png&margin=0`;
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + margin) * cell, (r + margin) * cell, cell, cell);
+    return true;
+  } catch (e) { console.error('QR:', e); return false; }
 }
+function makeQR(text, canvas, size) { return qrDraw(canvas, text, size, 1); }
 
 function getLabelText(p) {
+  if (p._loc != null) return getAppBaseUrl() + '?loc=' + p._loc;
   const content = document.getElementById('labelContent')?.value || 'url';
   if (content === 'url') return getAppBaseUrl() + '?part=' + p.id;
   if (content === 'ipn') return p.IPN || p.name;
@@ -3254,7 +3476,7 @@ function getLabelText(p) {
   return p.name;
 }
 
-function openPrintModal(singleId = null, bulkIds = null) {
+function openPrintModal(singleId = null, bulkIds = null, mode = null) {
   _selectedLabels = new Set();
   if (bulkIds) {
     document.getElementById('labelSelection').value = 'selected';
@@ -3263,6 +3485,7 @@ function openPrintModal(singleId = null, bulkIds = null) {
     document.getElementById('labelSelection').value = singleId ? 'single' : 'all';
     window._bulkPrintIds = null;
   }
+  if (mode) document.getElementById('labelSelection').value = mode;
   window._singlePrintId = singleId;
   renderLabelPreview();
   document.getElementById('printOvl').classList.add('open');
@@ -3305,11 +3528,9 @@ function showPartQr(id) {
   document.body.appendChild(ovl);
   setTimeout(() => {
     try {
-      new QRCode(document.getElementById('partQrCanvas'), {
-        text: url, width: 190, height: 190,
-        colorDark: '#111318', colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-      });
+      const c = document.createElement('canvas');
+      if (!qrDraw(c, url, 190, 0)) throw new Error('qr');
+      document.getElementById('partQrCanvas').appendChild(c);
     } catch (e) {
       document.getElementById('partQrCanvas').innerHTML = '<div style="color:var(--red);padding:14px">QR mislukt</div>';
     }
@@ -3329,11 +3550,18 @@ function closePrintModal() {
   document.getElementById('printOvl').classList.remove('open');
 }
 
+// Locatielabels: één QR per locatie (bak/kast/lade) die de app opent met alleen de onderdelen op die plek
+function locationLabelItems() {
+  return Object.entries(LOCS).sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'nl'))
+    .map(([id, name]) => ({ id: 1000000 + (+id || 0), _loc: +id, name, IPN: '', locId: null, desc: '' }));
+}
+
 function getPrintParts() {
   const sel = document.getElementById('labelSelection').value;
   if (sel === 'single' && window._singlePrintId) {
     return parts.filter(p => p.id === window._singlePrintId);
   }
+  if (sel === 'locations') return locationLabelItems();
   if (sel === 'filtered') return filtered();
   if (sel === 'selected') {
     const ids = window._bulkPrintIds || getSelectedIds();
@@ -3395,23 +3623,11 @@ function printLabels() {
   // Show print page
   document.getElementById('printPage').style.display = 'block';
 
-  // Generate QR codes on print page
-  let loaded = 0;
   toPrint.forEach(p => {
     const canvas = document.getElementById('pqr-' + p.id);
-    if (!canvas) return;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const ctx = canvas.getContext('2d');
-      canvas.width = qrSize; canvas.height = qrSize;
-      ctx.drawImage(img, 0, 0, qrSize, qrSize);
-      loaded++;
-      if (loaded === toPrint.length) setTimeout(() => window.print(), 300);
-    };
-    img.onerror = () => { loaded++; if (loaded === toPrint.length) setTimeout(() => window.print(), 300); };
-    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${qrSize}x${qrSize}&data=${encodeURIComponent(getLabelText(p))}&format=png&margin=2`;
+    if (canvas) qrDraw(canvas, getLabelText(p), qrSize, 2);
   });
+  setTimeout(() => window.print(), 300);
 
   closePrintModal();
 }
@@ -4482,11 +4698,9 @@ function showProjectQr(id) {
   document.body.appendChild(ovl);
   setTimeout(() => {
     try {
-      new QRCode(document.getElementById('projQrCanvas'), {
-        text: url, width: 200, height: 200,
-        colorDark: '#111318', colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-      });
+      const c = document.createElement('canvas');
+      if (!qrDraw(c, url, 200, 0)) throw new Error('qr');
+      document.getElementById('projQrCanvas').appendChild(c);
     } catch (e) {
       document.getElementById('projQrCanvas').innerHTML = '<div style="color:var(--red);padding:16px">QR genereren mislukt</div>';
     }
@@ -4519,12 +4733,7 @@ function exportBomCSV() {
       sn?.name || '', supp?.sku || '', supp?.link || p.link || ''
     ]);
   });
-  const csv = rows.map(r => r.map(c => '"' + String(c ?? '').replace(/"/g, '""') + '"').join(',')).join('');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = (proj.name + (proj.version ? '-' + proj.version : '') + '-BOM.csv').replace(/\s+/g, '-');
-  a.click();
+  csvDownload((proj.name + (proj.version ? '-' + proj.version : '') + '-BOM.csv').replace(/\s+/g, '-'), rows);
   toast('BOM geëxporteerd');
 }
 
@@ -5303,6 +5512,15 @@ async function handleScanResult(val, manual) {
     resultEl.textContent = 'Gescand: ' + val;
     resultEl.style.display = '';
     const v = val.trim().toLowerCase();
+    // Locatiecode (QR van een bak/kast): toon alleen de onderdelen op die plek
+    const lm = /[?&]loc=(\d+)/.exec(val) || /^loc:(\d+)$/i.exec(val.trim());
+    if (lm && loc(+lm[1]) !== '—') {
+      toast(`📍 ${loc(+lm[1])}`);
+      if (u.ovl) closeScanOvl();
+      srch = '#loc:' + lm[1]; catF = null; { const si = document.getElementById('srch'); if (si) si.value = srch; }
+      renderSidebar(); renderTable();
+      return;
+    }
     const match = parts.find(p => (p.IPN && p.IPN.toLowerCase() === v) || p.name.toLowerCase() === v || String(p.id) === v);
     // Een QR met vaste link (…?part=12) werkt ook
     const m2 = !match && /[?&]part=(\d+)/.exec(val);
@@ -6043,7 +6261,7 @@ function handleDeepLink() {
     renderSidebar(); renderTable();
   }
   if (locId) {
-    srch = '#loc:' + locId;
+    srch = '#loc:' + locId; { const si = document.getElementById('srch'); if (si) si.value = srch; }
     renderSidebar(); renderTable();
   }
   if (partId) {
@@ -7038,7 +7256,7 @@ function copyReorderText() {
 (async () => {
   buildMenus();
   await Promise.all([loadAll(), loadServerConfig()]);
-  loadUpdateInfo();
+  loadUpdateInfo(); loadPriceAlerts();
   applyColVis();
   renderSidebar();
   renderTable();

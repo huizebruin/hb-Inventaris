@@ -16,7 +16,7 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="/vendor/qrcode-generator.js"></script>
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/static/admin.css">
 </head>
@@ -308,6 +308,8 @@
         <div class="scan-btns">
           <button class="btn" id="sqStartBtn" onclick="startScan()">▶ Camera starten</button>
           <button class="btn sec" onclick="stopScan()">■ Stop</button>
+          <button class="btn sec" onclick="document.getElementById('sqPhotoFile').click()">📷 Herken via foto</button>
+          <input type="file" id="sqPhotoFile" accept="image/*" capture="environment" style="display:none" onchange="scanByPhoto(this)">
         </div>
         <div id="sqLog" class="scan-log" aria-live="polite"></div>
       </div>
@@ -593,10 +595,8 @@
         </div>
       </div>
       <div class="mbdy" style="padding:0">
-        <div
-          style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surf2);font-size:12px;color:var(--text2)">
-          Onderdelen waarbij de voorraad onder de minimumdrempel zit.
-        </div>
+        <div id="orderOpts"
+          style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surf2);font-size:12px;color:var(--text2)"></div>
         <div id="orderBody" style="max-height:520px;overflow-y:auto"></div>
       </div>
     </div>
@@ -1097,6 +1097,7 @@
               <option value="filtered">Huidige weergave</option>
               <option value="selected">Geselecteerde rijen</option>
               <option value="single">Enkel onderdeel</option>
+              <option value="locations">Locaties (bakken/kasten)</option>
             </select>
           </div>
         </div>

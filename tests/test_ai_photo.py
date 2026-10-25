@@ -57,3 +57,14 @@ def test_env_file_next_to_server_is_read(tmp_path):
     out = subprocess.run([sys.executable, '-c', 'import os;os.environ.pop("GEMINI_API_KEY",None);import server;print(server.GEMINI_API_KEY)'],
                          cwd=d, capture_output=True, text=True, env={**__import__('os').environ, 'HB_DATA_DIR': str(d / 'data'), 'HB_BACKUP_DIR': str(d / 'b'), 'HB_MEDIA_DIR': str(d / 'm'), 'PYTHONPATH': str(d)})
     assert out.stdout.strip().endswith('abc123'), out.stderr[-500:]
+
+
+def test_other_types_are_sanitized(srv, client, monkeypatch):
+    parsed = {'name': 'Weerstand', 'found': True, 'quantity': 5, 'quantity_basis': 'geteld',
+              'others': [{'name': 'LED rood', 'quantity': 3, 'quantity_basis': 'geschat', 'category_id': 99999},
+                         {'name': '  '}, 'rommel', {'name': 'Condensator', 'quantity': -4, 'quantity_basis': 'geteld'}] + [{'name': f'x{i}'} for i in range(10)]}
+    j = call(client, srv, monkeypatch, parsed)[0].get_json()
+    names = [o['name'] for o in j['others']]
+    assert j['multiple_types'] is True and names[:2] == ['LED rood', 'Condensator'] and len(names) == 7
+    assert j['others'][0]['quantity'] == 3 and j['others'][0]['category_id'] is None
+    assert j['others'][1]['quantity'] is None

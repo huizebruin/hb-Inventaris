@@ -82,6 +82,8 @@ def _env_num(name, default, cast=int):
 
 BACKUP_RETENTION_DAYS = _env_num('HB_BACKUP_RETENTION_DAYS', 14)   # backups ouder dan dit worden opgeruimd
 BACKUP_KEEP_MIN       = _env_num('HB_BACKUP_KEEP_MIN', 3)          # minimaal zoveel (geldige) backups blijven altijd staan
+PRICE_ALERT_PCT       = _env_num('HB_PRICE_ALERT_PCT', 10, float)   # prijsstijging vanaf dit percentage geeft een melding (0 = uit)
+PRICE_ALERT_DAYS      = _env_num('HB_PRICE_ALERT_DAYS', 14)         # zo lang blijft een prijsstijging in het belletje staan
 BACKUP_TIME           = os.environ.get('HB_BACKUP_TIME', '00:00')  # dagelijks tijdstip (HH:MM, lokale tijd)
 BACKUP_STALE_HOURS    = _env_num('HB_BACKUP_STALE_HOURS', 36)      # backup ouder dan dit = "niet actueel"
 DISK_WARN_PCT         = _env_num('HB_DISK_WARN_PCT', 85)
@@ -505,10 +507,25 @@ def _migrate_3_expiry(db):
     """De frontend stuurt expiryDate al mee, maar de server sloeg het nog niet op."""
     _add_column(db, 'parts', 'expiryDate', "TEXT DEFAULT ''")
 
+def _migrate_4_value_prices(db):
+    """Voorraadwaarde per dag en prijslog (voor de grafiek en prijsstijgingsmeldingen)."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS value_snapshots (
+            day TEXT PRIMARY KEY, value REAL NOT NULL DEFAULT 0, parts INTEGER DEFAULT 0, items INTEGER DEFAULT 0, estimated INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS price_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, partId INTEGER, suppId INTEGER, sku TEXT DEFAULT '',
+            price REAL NOT NULL, prev REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_price_log_part ON price_log(partId);
+        CREATE INDEX IF NOT EXISTS idx_price_log_ts ON price_log(ts);
+    """)
+
 MIGRATIONS = [
     (1, 'Basiskolommen (projects.buildHistory/extra, history.price_paid/suppId)', _migrate_1_baseline),
     (2, 'Indexen op parts en history', _migrate_2_indexes),
     (3, 'parts.expiryDate (verloopdatum wordt nu echt opgeslagen)', _migrate_3_expiry),
+    (4, 'Voorraadwaarde per dag en prijslog', _migrate_4_value_prices),
 ]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -663,6 +680,9 @@ def appcss(): return send_file('static/app.css', mimetype='text/css; charset=utf
 @app.route('/app.js')
 def appjs(): return send_file('static/app.js', mimetype='text/javascript')
 
+@app.route('/vendor/<path:filename>')
+def vendor_files(filename): return send_from_directory('static/vendor', filename, max_age=86400)
+
 @app.route('/fonts/<path:filename>')
 def fonts(filename): return send_from_directory('static/fonts', filename)
 
@@ -706,6 +726,7 @@ def add_part():
             p.get('expiryDate','') or ''
         ))
         set_meta(db, 'nextId', nid + 1)
+        log_price_changes(db, nid, [], p.get('suppliers', []))
         return jsonify(part_to_dict(db.execute('SELECT * FROM parts WHERE id=?',(nid,)).fetchone())), 201
 
 @app.route('/api/parts/<int:pid>', methods=['PUT'])
@@ -727,6 +748,8 @@ def update_part(pid):
             json.dumps(p.get('tags',_jlist(row['tags'], pid, 'tags'))),
             p.get('expiryDate', row['expiryDate'] if 'expiryDate' in row.keys() else '') or '', pid
         ))
+        if 'suppliers' in p:
+            log_price_changes(db, pid, _jlist(row['suppliers'], pid, 'suppliers'), p['suppliers'])
         return jsonify(part_to_dict(db.execute('SELECT * FROM parts WHERE id=?',(pid,)).fetchone()))
 
 @app.route('/api/parts/<int:pid>', methods=['DELETE'])
@@ -995,9 +1018,9 @@ Beschikbare categorieën (ID: Naam), kies de best passende:
 {cat_list}
 
 Antwoord ALLEEN met een geldig JSON-object, zonder markdown-opmaak:
-{{"name": "<korte herkenbare naam, bv. '10k Ohm weerstand' of 'ESP32-WROOM-32 module'>", "value": "<waarde indien van toepassing, leeg als n.v.t.>", "brand": "<merk indien zichtbaar/herkenbaar, anders leeg>", "package": "<behuizing/package die je op de foto ziet>", "extra_info": "<overige zichtbare specs, opdruk/tekst, kleurcodes, bijzonderheden — kort>", "category_id": <best passende categorie-ID uit de lijst hierboven, of null>, "confidence": "hoog, gemiddeld of laag", "quantity": <aantal losse stuks van dit onderdeel dat je op de foto ziet, als geheel getal, of null>, "quantity_basis": "geteld, geschat of onbekend", "multiple_types": true of false, "found": true of false}}
+{{"name": "<korte herkenbare naam, bv. '10k Ohm weerstand' of 'ESP32-WROOM-32 module'>", "value": "<waarde indien van toepassing, leeg als n.v.t.>", "brand": "<merk indien zichtbaar/herkenbaar, anders leeg>", "package": "<behuizing/package die je op de foto ziet>", "extra_info": "<overige zichtbare specs, opdruk/tekst, kleurcodes, bijzonderheden — kort>", "category_id": <best passende categorie-ID uit de lijst hierboven, of null>, "confidence": "hoog, gemiddeld of laag", "quantity": <aantal losse stuks van dit onderdeel dat je op de foto ziet, als geheel getal, of null>, "quantity_basis": "geteld, geschat of onbekend", "multiple_types": true of false, "others": [], "found": true of false}}
 
-Regels voor het aantal: tel alleen stuks die je echt kunt onderscheiden. Zie je ze allemaal duidelijk, zet quantity_basis op "geteld". Liggen ze door elkaar of deels over elkaar, geef dan je beste schatting met "geschat". Zijn het er niet te tellen (rol, zakje vol, lint, bulk, onderdelen die verborgen zijn) of staat er maar een deel van de voorraad op, zet quantity op null en quantity_basis op "onbekend". Staat er een aantal op het etiket of de verpakking (bv. "100 pcs"), gebruik dat en zet "geteld". Staan er meerdere SOORTEN onderdelen op de foto, zet multiple_types op true en beschrijf alleen het duidelijkste of grootste soort.
+Regels voor het aantal: tel alleen stuks die je echt kunt onderscheiden. Zie je ze allemaal duidelijk, zet quantity_basis op "geteld". Liggen ze door elkaar of deels over elkaar, geef dan je beste schatting met "geschat". Zijn het er niet te tellen (rol, zakje vol, lint, bulk, onderdelen die verborgen zijn) of staat er maar een deel van de voorraad op, zet quantity op null en quantity_basis op "onbekend". Staat er een aantal op het etiket of de verpakking (bv. "100 pcs"), gebruik dat en zet "geteld". Staan er meerdere SOORTEN onderdelen op de foto, zet multiple_types op true, beschrijf in de hoofdvelden het duidelijkste of grootste soort en zet elk ander soort in "others" (maximaal 7), elk met dezelfde velden: {{"name","value","brand","package","extra_info","category_id","confidence","quantity","quantity_basis"}}. Staat er maar één soort op, laat "others" dan leeg.
 
 Als je het onderdeel niet met voldoende zekerheid kunt identificeren, zet found op false en laat de overige velden leeg. Verzin niets dat je niet op de foto kunt zien."""
 
@@ -1005,36 +1028,33 @@ Als je het onderdeel niet met voldoende zekerheid kunt identificeren, zet found 
     if err:
         return jsonify(err[0]), err[1]
 
-    cat_id = parsed.get('category_id')
-    try:
-        cat_id = int(cat_id) if cat_id is not None else None
-    except (TypeError, ValueError):
-        cat_id = None
-    if cat_id is not None and cat_id not in cat_by_id:
-        cat_id = None
-
-    qty = parsed.get('quantity')
-    try:
-        qty = int(float(qty)) if qty is not None and not isinstance(qty, bool) else None
-    except (TypeError, ValueError):
-        qty = None
-    if qty is not None and not (0 <= qty <= 100000): qty = None
-    basis = str(parsed.get('quantity_basis', '') or '').strip().lower()
-    if basis not in ('geteld', 'geschat'): qty = None; basis = 'onbekend'
-    return jsonify({
-        'quantity':        qty,
-        'quantity_basis':  basis,
-        'multiple_types':  bool(parsed.get('multiple_types', False)),
-        'name':          str(parsed.get('name', '') or ''),
-        'value':         str(parsed.get('value', '') or ''),
-        'brand':         str(parsed.get('brand', '') or ''),
-        'package':       str(parsed.get('package', '') or ''),
-        'extra_info':    str(parsed.get('extra_info', '') or ''),
-        'category_id':   cat_id,
-        'category_name': cat_by_id.get(cat_id, ''),
-        'confidence':    str(parsed.get('confidence', '') or ''),
-        'found':         bool(parsed.get('found', False)),
-    })
+    def clean(d, found=True):
+        d = d if isinstance(d, dict) else {}
+        cid = d.get('category_id')
+        try: cid = int(cid) if cid is not None else None
+        except (TypeError, ValueError): cid = None
+        if cid is not None and cid not in cat_by_id: cid = None
+        qty = d.get('quantity')
+        try: qty = int(float(qty)) if qty is not None and not isinstance(qty, bool) else None
+        except (TypeError, ValueError): qty = None
+        if qty is not None and not (0 <= qty <= 100000): qty = None
+        basis = str(d.get('quantity_basis', '') or '').strip().lower()
+        if basis not in ('geteld', 'geschat'): qty = None; basis = 'onbekend'
+        return {
+            'quantity': qty, 'quantity_basis': basis,
+            'name': str(d.get('name', '') or '')[:200], 'value': str(d.get('value', '') or '')[:200],
+            'brand': str(d.get('brand', '') or '')[:200], 'package': str(d.get('package', '') or '')[:200],
+            'extra_info': str(d.get('extra_info', '') or '')[:1000],
+            'category_id': cid, 'category_name': cat_by_id.get(cid, ''),
+            'confidence': str(d.get('confidence', '') or '')[:40],
+            'found': bool(d.get('found', found)),
+        }
+    out = clean(parsed, found=False)
+    raw_others = parsed.get('others') if isinstance(parsed.get('others'), list) else []
+    others = [clean(o) for o in raw_others if isinstance(o, dict) and str(o.get('name', '')).strip()][:7]
+    out['others'] = others
+    out['multiple_types'] = bool(parsed.get('multiple_types', False)) or bool(others)
+    return jsonify(out)
 
 
 @app.route('/api/ai/suggest-replacement', methods=['POST'])
@@ -1987,6 +2007,152 @@ def backup_status():
             'scheduler_running': BACKUP_STATE['scheduler'],
             'retention': {'days': BACKUP_RETENTION_DAYS, 'keep_min': BACKUP_KEEP_MIN}}
 
+# ── VOORRAADWAARDE IN DE TIJD + PRIJSLOG ──────────────────────
+def unit_price(suppliers):
+    """Laagste positieve prijs van de leveranciersregels (zelfde regel als het dashboard)."""
+    prices = []
+    for x in suppliers or []:
+        try:
+            v = float(x.get('price') or 0) if isinstance(x, dict) else 0
+        except (TypeError, ValueError):
+            v = 0
+        if v > 0: prices.append(v)
+    return min(prices) if prices else 0.0
+
+def _line_key(x):
+    return (str(x.get('suppId')), str(x.get('sku') or ''))
+
+def log_price_changes(db, part_id, old_lines, new_lines):
+    """Legt vast wanneer een prijs bij een leverancier verandert (of voor het eerst wordt ingevuld)."""
+    try:
+        old = {}
+        for x in old_lines or []:
+            if isinstance(x, dict) and x.get('suppId') not in (None, ''):
+                old[_line_key(x)] = x.get('price')
+        now = datetime.now(timezone.utc).isoformat()
+        for x in new_lines or []:
+            if not isinstance(x, dict) or x.get('suppId') in (None, ''): continue
+            try: price = float(x.get('price') or 0)
+            except (TypeError, ValueError): continue
+            if price <= 0: continue
+            prev = old.get(_line_key(x))
+            try: prev = float(prev) if prev not in (None, '') else None
+            except (TypeError, ValueError): prev = None
+            if prev is not None and abs(prev - price) < 1e-9: continue
+            try: sid = int(x.get('suppId'))
+            except (TypeError, ValueError): sid = None
+            db.execute('INSERT INTO price_log (ts,partId,suppId,sku,price,prev) VALUES (?,?,?,?,?,?)',
+                       (now, part_id, sid, str(x.get('sku') or '')[:100], price, prev if prev and prev > 0 else None))
+    except Exception as e:
+        log_event('db', 'warning', f'Prijslog niet bijgewerkt voor onderdeel {part_id}: {e}')
+
+def price_increases(days=None, pct=None, since_hours=None):
+    """Prijsstijgingen van minstens `pct` procent, nieuwste per onderdeel/leverancier."""
+    pct = PRICE_ALERT_PCT if pct is None else pct
+    if pct <= 0: return []
+    cutoff = (datetime.now(timezone.utc) - (timedelta(hours=since_hours) if since_hours else timedelta(days=days or PRICE_ALERT_DAYS))).isoformat()
+    out, seen = [], set()
+    with db_conn() as db:
+        sn = {r['id']: r['name'] for r in db.execute('SELECT id,name FROM suppliers').fetchall()}
+        pn = {r['id']: r['name'] for r in db.execute('SELECT id,name FROM parts').fetchall()}
+        for r in db.execute('SELECT * FROM price_log WHERE ts>=? ORDER BY ts DESC', (cutoff,)).fetchall():
+            k = (r['partId'], r['suppId'], r['sku'])
+            if k in seen: continue
+            seen.add(k)
+            if not r['prev'] or r['prev'] <= 0 or r['partId'] not in pn: continue
+            change = (r['price'] - r['prev']) / r['prev'] * 100
+            if change + 1e-9 >= pct:
+                out.append({'partId': r['partId'], 'part': pn[r['partId']], 'suppId': r['suppId'], 'supplier': sn.get(r['suppId'], ''),
+                            'prev': r['prev'], 'price': r['price'], 'pct': round(change, 1), 'ts': r['ts']})
+    return sorted(out, key=lambda x: -x['pct'])
+
+def stock_value_now(db):
+    value, n_parts, n_items = 0.0, 0, 0
+    for r in db.execute('SELECT stock,suppliers,id FROM parts WHERE active=1').fetchall():
+        st = int(r['stock'] or 0)
+        if st <= 0: continue
+        n_items += st
+        pr = unit_price(_jlist(r['suppliers'], r['id'], 'suppliers'))
+        if pr > 0: value += pr * st; n_parts += 1
+    return round(value, 2), n_parts, n_items
+
+def take_value_snapshot():
+    """Slaat de voorraadwaarde van vandaag op (laatste meting van de dag wint)."""
+    with db_conn() as db:
+        v, n, it = stock_value_now(db)
+        day = datetime.now().date().isoformat()
+        db.execute('INSERT OR REPLACE INTO value_snapshots (day,value,parts,items,estimated) VALUES (?,?,?,?,0)', (day, v, n, it))
+    return {'day': day, 'value': v}
+
+def backfill_value_history(max_days=400):
+    """Eenmalig: reconstrueert eerdere dagen uit de mutatiegeschiedenis (huidige prijzen; gemarkeerd als schatting)."""
+    with db_conn() as db:
+        if db.execute('SELECT COUNT(*) FROM value_snapshots').fetchone()[0]: return 0
+        hist = db.execute('SELECT ts,partId,delta FROM history WHERE delta IS NOT NULL AND partId IS NOT NULL ORDER BY ts DESC').fetchall()
+        if not hist: return 0
+        stock, price = {}, {}
+        for r in db.execute('SELECT id,stock,suppliers FROM parts WHERE active=1').fetchall():
+            stock[r['id']] = int(r['stock'] or 0); price[r['id']] = unit_price(_jlist(r['suppliers'], r['id'], 'suppliers'))
+        by_day = {}
+        for h in hist: by_day.setdefault(str(h['ts'])[:10], []).append(h)
+        first = min(by_day)
+        day = datetime.now().date()
+        n = 0
+        while day.isoformat() >= first and n < max_days:
+            d = day.isoformat()
+            if d != datetime.now().date().isoformat():   # vandaag komt van de echte meting
+                val = sum(max(0, stock[i]) * price[i] for i in stock)
+                db.execute('INSERT OR IGNORE INTO value_snapshots (day,value,parts,items,estimated) VALUES (?,?,?,?,1)',
+                           (d, round(val, 2), sum(1 for i in stock if stock[i] > 0 and price[i] > 0), sum(max(0, v) for v in stock.values())))
+                n += 1
+            for h in by_day.get(d, []):          # stand aan het begin van deze dag = stand eind vorige dag
+                if h['partId'] in stock: stock[h['partId']] -= int(h['delta'] or 0)
+            day -= timedelta(days=1)
+        return n
+
+def value_loop():
+    try:
+        if BACKUP_STOP.wait(30): return
+        try:
+            n = backfill_value_history()
+            if n: log_event('stats', 'info', f'Voorraadwaarde van {n} eerdere dagen geschat uit de mutatiegeschiedenis')
+        except Exception as e:
+            log_event('stats', 'warning', f'Terugrekenen voorraadwaarde mislukt: {e}')
+        while not BACKUP_STOP.is_set():
+            try: take_value_snapshot()
+            except Exception as e: log_event('stats', 'warning', f'Voorraadwaarde vastleggen mislukt: {e}')
+            if BACKUP_STOP.wait(3 * 3600): return
+    except Exception as e:
+        log_event('stats', 'error', f'Waardemeting gestopt: {e}')
+
+@app.route('/api/stats/value')
+def api_stats_value():
+    days = max(7, min(int(request.args.get('days', 90) or 90), 800))
+    since = (datetime.now().date() - timedelta(days=days)).isoformat()
+    with db_conn() as db:
+        pts = [{'day': r['day'], 'value': r['value'], 'estimated': bool(r['estimated'])}
+               for r in db.execute('SELECT * FROM value_snapshots WHERE day>=? ORDER BY day', (since,)).fetchall()]
+        v, n, it = stock_value_now(db)
+    today = datetime.now().date().isoformat()
+    if not pts or pts[-1]['day'] != today: pts.append({'day': today, 'value': v, 'estimated': False})
+    else: pts[-1]['value'] = v
+    return jsonify({'points': pts, 'current': {'value': v, 'priced_parts': n, 'items': it}})
+
+@app.route('/api/prices/changes')
+def api_price_changes():
+    try: pct = float(request.args.get('min_pct')) if request.args.get('min_pct') not in (None, '') else None
+    except ValueError: pct = None
+    try: days = int(request.args.get('days')) if request.args.get('days') else None
+    except ValueError: days = None
+    return jsonify({'min_pct': PRICE_ALERT_PCT if pct is None else pct, 'items': price_increases(days=days, pct=pct)})
+
+@app.route('/api/prices/part/<int:pid>')
+def api_price_part(pid):
+    with db_conn() as db:
+        sn = {r['id']: r['name'] for r in db.execute('SELECT id,name FROM suppliers').fetchall()}
+        rows = db.execute('SELECT ts,suppId,sku,price,prev FROM price_log WHERE partId=? ORDER BY ts DESC LIMIT 200', (pid,)).fetchall()
+    return jsonify([{'ts': r['ts'], 'suppId': r['suppId'], 'supplier': sn.get(r['suppId'], ''), 'sku': r['sku'], 'price': r['price'], 'prev': r['prev']} for r in rows])
+
 # ── UPDATES (controle op nieuwe versie + optioneel zelf bijwerken) ──
 # De app vraagt (standaard elke 12 uur) bij GitHub de nieuwste release op (alleen de gewone publieke API, er wordt niets van jou verstuurd).
 # Uitzetten: HB_UPDATE_CHECK=0. Zelf bijwerken uit de app kan niet bij Docker (daar bouw je de image opnieuw), en uit te zetten met HB_UPDATE_INSTALL=0.
@@ -2275,7 +2441,8 @@ def build_digest():
     health = full_health(include_media=False)
     probs = [i for i in health['issues'] if i['severity'] in ('error', 'warning')]
     upd = update_status() if UPDATE_CHECK else {'available': False}
-    if not (low or exp or probs or upd['available']): return None
+    pri = price_increases(since_hours=36)
+    if not (low or exp or probs or upd['available'] or pri): return None
     parts_t, parts_h = [], []
     def sect(title, lines):
         parts_t.append(title + '\n' + '\n'.join('  - ' + l for l in lines))
@@ -2289,7 +2456,8 @@ def build_digest():
             except ValueError: return d
             return _l('verlopen', 'expired') if n < 0 else _l('verloopt vandaag', 'expires today') if n == 0 else _l(f'verloopt over {n} dagen ({d})', f'expires in {n} days ({d})')
         sect(_l(f'Verloopdatum ({len(exp)})', f'Expiry date ({len(exp)})'), [f'{r["name"]}: {lab(r["expiryDate"])}' for r in exp])
-    bits = [x for x in (_l(f'{len(probs)} systeemmelding(en)', f'{len(probs)} system alert(s)') if probs else '', _l(f'{len(low)} lage voorraad', f'{len(low)} low stock') if low else '', _l(f'{len(exp)} verloopt', f'{len(exp)} expiring') if exp else '', _l('update beschikbaar', 'update available') if upd['available'] else '') if x]
+    if pri: sect(_l(f'Prijsstijgingen ({len(pri)})', f'Price increases ({len(pri)})'), [f'{i["part"]}{" (" + i["supplier"] + ")" if i["supplier"] else ""}: €{i["prev"]:.2f} → €{i["price"]:.2f} (+{i["pct"]:g}%)' for i in pri])
+    bits = [x for x in (_l(f'{len(probs)} systeemmelding(en)', f'{len(probs)} system alert(s)') if probs else '', _l(f'{len(low)} lage voorraad', f'{len(low)} low stock') if low else '', _l(f'{len(exp)} verloopt', f'{len(exp)} expiring') if exp else '', _l('update beschikbaar', 'update available') if upd['available'] else '', _l(f'{len(pri)} prijsstijging(en)', f'{len(pri)} price increase(s)') if pri else '') if x]
     subject = _l('Overzicht: ', 'Summary: ') + ', '.join(bits)
     foot = _l('Beheer: Menu → Beheer & gezondheid.', 'Admin: Menu → Admin & health.')
     head = _l(f'Overzicht van {today:%d-%m-%Y}', f'Summary for {today:%Y-%m-%d}')
@@ -3673,6 +3841,7 @@ def startup_check():
 
 def start_background_jobs():
     t = threading.Thread(target=auto_backup, daemon=True, name='hb-backup'); t.start()
+    threading.Thread(target=value_loop, daemon=True, name='hb-value').start()
     if UPDATE_CHECK: threading.Thread(target=update_loop, daemon=True, name='hb-update').start()
     if mail_configured() and MAIL_DIGEST_TIME:
         threading.Thread(target=mail_digest_loop, daemon=True, name='hb-mail-digest').start()

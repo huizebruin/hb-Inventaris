@@ -122,6 +122,12 @@ Practical tips:
 - Make sure files are readable by the container user (e.g. `chmod -R a+rX media`).
 - A share with guest write access means anyone on your LAN can place files; use a user with a password.
 
+## 5b. Updates and outgoing traffic
+
+The app itself only connects to GitHub (update check, every 12 hours) and – if you set them up – Gemini, Telegram and your SMTP server.
+Self-updating downloads program code from GitHub and runs it. If you run the app in a tightly locked-down network, or don't want that, set `HB_UPDATE_INSTALL=0`
+(notify only) or `HB_UPDATE_CHECK=0` (nothing) in `.env`. With Docker the app can't update itself anyway.
+
 ## 6. After an incident
 
 1. Shut the app down (`docker compose stop`).

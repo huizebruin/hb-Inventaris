@@ -1968,6 +1968,217 @@ def backup_status():
             'scheduler_running': BACKUP_STATE['scheduler'],
             'retention': {'days': BACKUP_RETENTION_DAYS, 'keep_min': BACKUP_KEEP_MIN}}
 
+# ── UPDATES (controle op nieuwe versie + optioneel zelf bijwerken) ──
+# De app vraagt (standaard elke 12 uur) bij GitHub de nieuwste release op (alleen de gewone publieke API, er wordt niets van jou verstuurd).
+# Uitzetten: HB_UPDATE_CHECK=0. Zelf bijwerken uit de app kan niet bij Docker (daar bouw je de image opnieuw), en uit te zetten met HB_UPDATE_INSTALL=0.
+UPDATE_CHECK      = os.environ.get('HB_UPDATE_CHECK', '1').strip().lower() not in ('0', 'false', 'no', 'off', '')
+UPDATE_INSTALL    = os.environ.get('HB_UPDATE_INSTALL', '1').strip().lower() not in ('0', 'false', 'no', 'off', '')
+UPDATE_REPO       = os.environ.get('HB_UPDATE_REPO', 'huizebruin/hb-Inventaris').strip()
+UPDATE_INTERVAL_H = 12
+UPDATE_MAX_MB     = 60
+CODE_DIR          = BASE_DIR
+UPDATE_STATE      = {'checked_at': None, 'latest': None, 'url': None, 'notes': '', 'published': None, 'zip_url': None, 'sha_url': None, 'error': None}
+UPDATE_LOCK       = threading.Lock()
+# Alleen deze onderdelen worden bij een update overschreven; data/, media/, backups/, .env en het .bat-bestand blijven altijd ongemoeid.
+UPDATE_PATHS      = ('server.py', 'requirements.txt', 'static', 'docs', 'README.md', 'README.en.md', 'CHANGELOG.md', 'CHANGELOG.en.md',
+                     'LICENSE', '.env.example', 'Dockerfile', 'docker-compose.yml')
+
+def parse_version(v):
+    m = re.match(r'^v?(\d+)\.(\d+)\.(\d+)', str(v or '').strip())
+    return tuple(int(x) for x in m.groups()) if m else None
+
+def in_docker():
+    return os.path.exists('/.dockerenv') or os.environ.get('HB_DOCKER', '') == '1'
+
+def _http_get(url, timeout=10, accept=None, max_bytes=None):
+    req = urllib.request.Request(url, headers={'User-Agent': f'HB-Inventaris/{APP_VERSION}', 'Accept': accept or '*/*'})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read(max_bytes + 1) if max_bytes else r.read()
+    if max_bytes and len(data) > max_bytes: raise ValueError('Download is groter dan toegestaan')
+    return data
+
+def check_update(force=False):
+    """Haalt de nieuwste GitHub-release op (gecached). Geeft altijd de huidige status terug, ook bij een netwerkfout."""
+    if not UPDATE_CHECK: return update_status()
+    with UPDATE_LOCK:
+        last = UPDATE_STATE['checked_at']
+        if last and time.time() - last < (60 if force else UPDATE_INTERVAL_H * 3600): return update_status()
+        UPDATE_STATE['checked_at'] = time.time()
+        try:
+            rel = json.loads(_http_get(f'https://api.github.com/repos/{UPDATE_REPO}/releases/latest', accept='application/vnd.github+json', max_bytes=2_000_000))
+            tag = str(rel.get('tag_name') or '')
+            if not parse_version(tag): raise ValueError(f'Onbekend versienummer in release: {tag!r}')
+            ver = '.'.join(map(str, parse_version(tag)))
+            assets = {a.get('name'): a.get('browser_download_url') for a in rel.get('assets', []) if isinstance(a, dict)}
+            zip_name = f'hb-inventaris-{ver}.zip'
+            prev = UPDATE_STATE['latest']
+            UPDATE_STATE.update(latest=ver, url=rel.get('html_url') or f'https://github.com/{UPDATE_REPO}/releases', notes=str(rel.get('body') or '')[:6000],
+                                published=rel.get('published_at'), zip_url=assets.get(zip_name), sha_url=assets.get(zip_name + '.sha256'), error=None)
+            if prev != ver and parse_version(ver) > (parse_version(APP_VERSION) or (0, 0, 0)):
+                log_event('update', 'info', f'Nieuwe versie beschikbaar: {ver} (huidig {APP_VERSION})')
+        except Exception as e:
+            UPDATE_STATE['error'] = str(e)[:200]
+            log_event('update', 'warning', f'Updatecontrole mislukt: {e}')
+    return update_status()
+
+def update_status():
+    cur, lat = parse_version(APP_VERSION), parse_version(UPDATE_STATE['latest'])
+    available = bool(UPDATE_CHECK and cur and lat and lat > cur)
+    reason, cmds = '', None
+    if not UPDATE_CHECK: reason = 'check_disabled'
+    elif in_docker():
+        reason = 'docker'
+        cmds = ['git pull', 'docker compose up -d --build']
+    elif not UPDATE_INSTALL: reason = 'install_disabled'
+    elif not os.access(CODE_DIR, os.W_OK) or not os.access(CODE_DIR / 'server.py', os.W_OK): reason = 'not_writable'
+    elif available and not (UPDATE_STATE['zip_url'] and UPDATE_STATE['sha_url']): reason = 'no_package'
+    return {'enabled': UPDATE_CHECK, 'current': APP_VERSION, 'latest': UPDATE_STATE['latest'], 'available': available, 'url': UPDATE_STATE['url'],
+            'notes': UPDATE_STATE['notes'], 'published': UPDATE_STATE['published'], 'error': UPDATE_STATE['error'],
+            'checked_at': datetime.fromtimestamp(UPDATE_STATE['checked_at']).isoformat(timespec='seconds') if UPDATE_STATE['checked_at'] else None,
+            'install_possible': not reason, 'install_blocked': reason, 'commands': cmds, 'repo': UPDATE_REPO}
+
+def update_loop():
+    if BACKUP_STOP.wait(90): return
+    while not BACKUP_STOP.is_set():
+        try: check_update()
+        except Exception: pass
+        if BACKUP_STOP.wait(UPDATE_INTERVAL_H * 3600): return
+
+def _code_backup(old_version):
+    """Zip van de huidige programmacode, zodat een update altijd handmatig terug te zetten is."""
+    import zipfile
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    out = BACKUP_DIR / f'code-{old_version}-{datetime.now():%Y%m%d_%H%M%S}.zip'
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        for rel in UPDATE_PATHS:
+            src = CODE_DIR / rel
+            if src.is_file(): z.write(src, rel)
+            elif src.is_dir():
+                for f in src.rglob('*'):
+                    if f.is_file() and '__pycache__' not in f.parts: z.write(f, f.relative_to(CODE_DIR).as_posix())
+    for old in sorted(BACKUP_DIR.glob('code-*.zip'))[:-3]:   # laatste 3 bewaren
+        try: old.unlink()
+        except OSError: pass
+    return out
+
+def _restore_code(zpath):
+    import zipfile
+    with zipfile.ZipFile(zpath) as z:
+        for name in z.namelist():
+            dest = CODE_DIR / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + '.restore')
+            tmp.write_bytes(z.read(name)); os.replace(tmp, dest)
+
+def restart_app(delay=1.5):
+    """Herstart het proces na een update (apart zodat tests dit kunnen vervangen)."""
+    def run():
+        time.sleep(delay)
+        BACKUP_STOP.set()
+        try:
+            if os.name == 'nt':
+                import subprocess
+                helper = ("import subprocess,time,sys\ntime.sleep(3)\nsi=subprocess.STARTUPINFO(); si.dwFlags|=1; si.wShowWindow=6\n"
+                          f"subprocess.Popen([{sys.executable!r}]+{list(sys.argv)!r}, cwd={str(CODE_DIR)!r}, creationflags=0x10, startupinfo=si)\n")
+                subprocess.Popen([sys.executable, '-c', helper], cwd=str(CODE_DIR), creationflags=0x08 | 0x200)
+                os._exit(0)
+            os.environ.pop('WERKZEUG_SERVER_FD', None)   # anders probeert de nieuwe server de oude luistersocket te hergebruiken
+            os.closerange(3, 4096)                       # luistersocket sluiten, anders blijft poort 5000 bezet na de herstart
+            os.chdir(CODE_DIR)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            log_event('update', 'error', f'Herstarten mislukt, start de app handmatig opnieuw: {e}')
+    threading.Thread(target=run, daemon=True, name='hb-restart').start()
+
+def install_update(version):
+    """Downloadt de release, controleert hem (SHA-256, paden, inhoud), maakt een database- en codebackup en past hem toe."""
+    import hashlib, tempfile, zipfile, subprocess, py_compile
+    st = update_status()
+    if not st['install_possible']: raise RuntimeError({'docker': 'Bij Docker kan de app zich niet zelf bijwerken: bouw de image opnieuw.',
+        'install_disabled': 'Zelf bijwerken staat uit (HB_UPDATE_INSTALL=0).', 'not_writable': 'De programmamap is niet beschrijfbaar.',
+        'no_package': 'Deze release heeft geen zip met controlebestand (.sha256).', 'check_disabled': 'Updatecontrole staat uit (HB_UPDATE_CHECK=0).'}.get(st['install_blocked'], 'Niet mogelijk'))
+    if not st['available'] or version != st['latest']: raise RuntimeError('Er is geen nieuwere versie beschikbaar, of de versie komt niet overeen.')
+    base = f'https://github.com/{UPDATE_REPO}/releases/download/'
+    if not (UPDATE_STATE['zip_url'] or '').startswith(base) or not (UPDATE_STATE['sha_url'] or '').startswith(base):
+        raise RuntimeError('Downloadlocatie komt niet van de verwachte GitHub-repository')
+    steps = []
+    tmp = Path(tempfile.mkdtemp(prefix='hb-update-'))
+    code_zip = None
+    try:
+        data = _http_get(UPDATE_STATE['zip_url'], timeout=60, max_bytes=UPDATE_MAX_MB * 1048576)
+        want = _http_get(UPDATE_STATE['sha_url'], timeout=20, max_bytes=4096).decode('utf-8', 'replace').split()[0].strip().lower()
+        got = hashlib.sha256(data).hexdigest()
+        if want != got: raise RuntimeError('Controlesom (SHA-256) klopt niet: download is beschadigd of onbetrouwbaar, niets gewijzigd')
+        steps.append('Download gecontroleerd (SHA-256)')
+        zp = tmp / 'release.zip'; zp.write_bytes(data)
+        prefix = f'hb-inventaris-{version}/'
+        new = tmp / 'new'; new.mkdir()
+        with zipfile.ZipFile(zp) as z:
+            infos = z.infolist()
+            if sum(i.file_size for i in infos) > 300 * 1048576: raise RuntimeError('Zip is onverwacht groot')
+            for i in infos:
+                n = i.filename
+                if not n.startswith(prefix) or '..' in n.split('/') or n.startswith('/') or '\\' in n or ':' in n: raise RuntimeError(f'Onveilig pad in zip: {n}')
+            for i in infos:
+                rel = i.filename[len(prefix):]
+                if not rel or i.is_dir(): continue
+                dest = new / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(z.read(i))
+        srv_new = new / 'server.py'
+        if not srv_new.is_file() or not (new / 'static' / 'app.js').is_file(): raise RuntimeError('Zip bevat niet de verwachte bestanden')
+        m = re.search(r"^APP_VERSION\s*=\s*'([^']+)'", srv_new.read_text(encoding='utf-8'), re.M)
+        if not m or m.group(1) != version: raise RuntimeError(f'Versie in de zip ({m.group(1) if m else "?"}) komt niet overeen met {version}')
+        py_compile.compile(str(srv_new), cfile=str(tmp / 'check.pyc'), doraise=True)
+        steps.append('Inhoud gecontroleerd')
+        pre = do_backup('pre-update')
+        steps.append(f'Databasebackup gemaakt: {pre}')
+        code_zip = _code_backup(APP_VERSION)
+        steps.append(f'Programmacode bewaard: {code_zip.name}')
+        old_req = (CODE_DIR / 'requirements.txt').read_bytes() if (CODE_DIR / 'requirements.txt').exists() else b''
+        for rel in UPDATE_PATHS:
+            src = new / rel
+            if src.is_file():
+                dst = CODE_DIR / rel; dst.parent.mkdir(parents=True, exist_ok=True)
+                t = dst.with_name(dst.name + '.new'); shutil.copyfile(src, t); os.replace(t, dst)
+            elif src.is_dir():
+                for f in src.rglob('*'):
+                    if not f.is_file(): continue
+                    dst = CODE_DIR / rel / f.relative_to(src); dst.parent.mkdir(parents=True, exist_ok=True)
+                    t = dst.with_name(dst.name + '.new'); shutil.copyfile(f, t); os.replace(t, dst)
+        steps.append('Bestanden bijgewerkt')
+        new_req = (CODE_DIR / 'requirements.txt').read_bytes() if (CODE_DIR / 'requirements.txt').exists() else b''
+        if new_req != old_req:
+            r = subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet', '-r', str(CODE_DIR / 'requirements.txt')], capture_output=True, text=True, timeout=600)
+            if r.returncode != 0: raise RuntimeError('Pakketten installeren mislukt: ' + (r.stderr or r.stdout)[-300:])
+            steps.append('Nieuwe pakketten geïnstalleerd')
+    except Exception as e:
+        if code_zip:
+            try: _restore_code(code_zip); steps.append('Teruggezet naar de vorige versie')
+            except Exception as e2: log_event('update', 'error', f'Terugzetten na mislukte update mislukt: {e2}')
+        log_event('update', 'error', f'Update naar {version} mislukt: {e}', stappen=steps)
+        raise
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    log_event('update', 'info', f'Bijgewerkt van {APP_VERSION} naar {version}; herstart volgt', stappen=steps)
+    restart_app()
+    return steps
+
+@app.route('/api/update', methods=['GET'])
+def api_update():
+    return jsonify(check_update(force=request.args.get('refresh') == '1'))
+
+@app.route('/api/admin/update/install', methods=['POST'])
+@admin_required
+def api_update_install():
+    b = V(json_body()).text('version', required=True, max_len=20).boolean('confirm').done()
+    if b.get('confirm') is not True: raise Invalid({'confirm': 'bevestiging ontbreekt'})
+    try:
+        steps = install_update(b['version'])
+    except Exception as e:
+        return jsonify({'error': f'Update mislukt: {e}'}), 500
+    return jsonify({'ok': True, 'steps': steps, 'from': APP_VERSION, 'to': b['version'], 'restarting': True})
+
 # ── E-MAILMELDINGEN (optioneel) ───────────────────────────────
 # Server-side, dus onafhankelijk van een open browser. Instellen in .env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
 # en HB_EMAIL (ontvanger, meerdere gescheiden door komma). Zonder deze waarden gebeurt er niets.
@@ -2044,12 +2255,14 @@ def build_digest():
         exp = db.execute("SELECT id,name,expiryDate FROM parts WHERE active=1 AND expiryDate IS NOT NULL AND expiryDate!='' AND expiryDate<=? ORDER BY expiryDate", (limit,)).fetchall()
     health = full_health(include_media=False)
     probs = [i for i in health['issues'] if i['severity'] in ('error', 'warning')]
-    if not (low or exp or probs): return None
+    upd = update_status() if UPDATE_CHECK else {'available': False}
+    if not (low or exp or probs or upd['available']): return None
     parts_t, parts_h = [], []
     def sect(title, lines):
         parts_t.append(title + '\n' + '\n'.join('  - ' + l for l in lines))
         parts_h.append(f'<h3 style="margin:16px 0 6px">{title}</h3><ul style="margin:0;padding-left:20px">' + ''.join(f'<li>{_esc(l)}</li>' for l in lines) + '</ul>')
     if probs: sect(_l(f'Systeem ({len(probs)})', f'System ({len(probs)})'), [f'{_l("FOUT", "ERROR") if i["severity"] == "error" else _l("Let op", "Warning")}: {i["title"]}' for i in probs])
+    if upd['available']: sect(_l('Update', 'Update'), [_l(f'Nieuwe versie {upd["latest"]} beschikbaar (nu {APP_VERSION}): {upd["url"]}', f'New version {upd["latest"]} available (now {APP_VERSION}): {upd["url"]}')])
     if low: sect(_l(f'Lage voorraad ({len(low)})', f'Low stock ({len(low)})'), [f'{r["name"]}: {r["stock"] or 0} ({_l("minimaal", "minimum")} {r["minStock"]})' for r in low])
     if exp:
         def lab(d):
@@ -2057,7 +2270,7 @@ def build_digest():
             except ValueError: return d
             return _l('verlopen', 'expired') if n < 0 else _l('verloopt vandaag', 'expires today') if n == 0 else _l(f'verloopt over {n} dagen ({d})', f'expires in {n} days ({d})')
         sect(_l(f'Verloopdatum ({len(exp)})', f'Expiry date ({len(exp)})'), [f'{r["name"]}: {lab(r["expiryDate"])}' for r in exp])
-    bits = [x for x in (_l(f'{len(probs)} systeemmelding(en)', f'{len(probs)} system alert(s)') if probs else '', _l(f'{len(low)} lage voorraad', f'{len(low)} low stock') if low else '', _l(f'{len(exp)} verloopt', f'{len(exp)} expiring') if exp else '') if x]
+    bits = [x for x in (_l(f'{len(probs)} systeemmelding(en)', f'{len(probs)} system alert(s)') if probs else '', _l(f'{len(low)} lage voorraad', f'{len(low)} low stock') if low else '', _l(f'{len(exp)} verloopt', f'{len(exp)} expiring') if exp else '', _l('update beschikbaar', 'update available') if upd['available'] else '') if x]
     subject = _l('Overzicht: ', 'Summary: ') + ', '.join(bits)
     foot = _l('Beheer: Menu → Beheer & gezondheid.', 'Admin: Menu → Admin & health.')
     head = _l(f'Overzicht van {today:%d-%m-%Y}', f'Summary for {today:%Y-%m-%d}')
@@ -2666,7 +2879,7 @@ def system_info():
             'sqlite': sqlite3.sqlite_version, 'pillow': _has_module('PIL'), 'openpyxl': _has_module('openpyxl'),
             'gemini_configured': bool(GEMINI_API_KEY), 'telegram_configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
             'mail_configured': mail_configured(), 'mail_digest_time': MAIL_DIGEST_TIME if mail_configured() else '', 'mail_last_ok': MAIL_STATE['last_ok'], 'mail_last_error': MAIL_STATE['last_error'],
-            'admin_token_required': bool(ADMIN_TOKEN), 'auth_enabled': auth_enabled(),
+            'update_check': UPDATE_CHECK, 'update_install': UPDATE_INSTALL, 'admin_token_required': bool(ADMIN_TOKEN), 'auth_enabled': auth_enabled(),
             'settings': {'backup_time': BACKUP_TIME, 'backup_retention_days': BACKUP_RETENTION_DAYS, 'backup_keep_min': BACKUP_KEEP_MIN,
                          'backup_stale_hours': BACKUP_STALE_HOURS, 'max_upload_mb': MAX_UPLOAD_MB, 'media_max_mb': MEDIA_MAX_MB,
                          'orphan_grace_min': ORPHAN_GRACE_MIN, 'log_max_mb': LOG_MAX_MB, 'log_backups': LOG_BACKUPS}}
@@ -3423,6 +3636,7 @@ def startup_check():
 
 def start_background_jobs():
     t = threading.Thread(target=auto_backup, daemon=True, name='hb-backup'); t.start()
+    if UPDATE_CHECK: threading.Thread(target=update_loop, daemon=True, name='hb-update').start()
     if mail_configured() and MAIL_DIGEST_TIME:
         threading.Thread(target=mail_digest_loop, daemon=True, name='hb-mail-digest').start()
         log_event('mail', 'info', f'Dagelijks overzicht per e-mail om {MAIL_DIGEST_TIME} naar {len(MAIL_TO)} ontvanger(s)')

@@ -1986,12 +1986,13 @@ function alertCounts() {
     return st === 'expired' || st === 'critical' || st === 'warning';
   }).length;
   const sug = (window._suggestions || []).length;
+  const upd = window._update && window._update.available ? 1 : 0;
   const zero = active.filter(p => (p.stock || 0) === 0).length;
-  return { low, exp, sug, zero };
+  return { low, exp, sug, zero, upd };
 }
 function updateAlertCenter() {
   const c = alertCounts();
-  const total = c.low + c.exp + c.sug;
+  const total = c.low + c.exp + c.sug + c.upd;
   const el = document.getElementById('alertCount');
   if (!el) return;
   el.hidden = total === 0;
@@ -2007,6 +2008,7 @@ function renderAlertPop() {
   if (c.low) h += row('low', '⚠', 'Lage voorraad', c.low, 'is-red');
   if (c.exp) h += row('exp', '⏰', 'Verloopt binnenkort', c.exp, 'is-orange');
   if (c.sug) h += row('sug', '💡', 'Suggesties', c.sug, 'is-green');
+  if (c.upd) h += row('upd', '⬆', 'Nieuwe versie ' + window._update.latest, 1, 'is-green');
   if (!h) h = '<div class="alert-empty">Alles in orde ✓</div>';
   h += '<div class="alert-sep"></div>';
   h += row('zero', '∅', window._zeroStockMode ? 'Lege vakken (filter aan)' : 'Lege vakken tonen', c.zero, window._zeroStockMode ? 'is-on' : '');
@@ -2032,6 +2034,10 @@ function alertGo(key) {
   else if (key === 'exp') showExpiryList();
   else if (key === 'sug') openSuggestions();
   else if (key === 'zero') toggleZeroStock();
+  else if (key === 'upd') openAdmin('upd');
+}
+async function loadUpdateInfo() {
+  try { window._update = await (await fetch('/api/update')).json(); updateAlertCenter(); } catch (e) { }
 }
 
 // ── MENU (één definitie voor desktop-dropdown én mobiel menu-blad) ──
@@ -6993,6 +6999,7 @@ function copyReorderText() {
 (async () => {
   buildMenus();
   await Promise.all([loadAll(), loadServerConfig()]);
+  loadUpdateInfo();
   applyColVis();
   renderSidebar();
   renderTable();

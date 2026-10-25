@@ -168,6 +168,8 @@ GitHub Actions runs this on every push. Changes are listed in [CHANGELOG.en.md](
 Under **Menu → Admin → Admin & health** you'll find a dashboard with database size, disk space, last/next backup and
 integrity status, a check with repair actions, backups (with retention and restore with verification), import/export
 (CSV, Excel, JSON with a preview before saving), media cleanup and the log. See [docs/ADMIN.en.md](docs/ADMIN.en.md).
+
+**Updates:** the app tells you when a newer version is on GitHub (bell and *Updates* tab) and, on installs without Docker, can update itself with one click after an automatic backup. See [docs/ADMIN.en.md](docs/ADMIN.en.md#updates).
 New optional settings are in `.env.example`.
 
 ## Keyboard shortcuts

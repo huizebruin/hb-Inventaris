@@ -5,6 +5,16 @@
 Alle noemenswaardige wijzigingen. Formaat volgens [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/),
 versies volgens [SemVer](https://semver.org/lang/nl/).
 
+## [Onuitgebracht]
+
+### Toegevoegd
+- **Updatemelding:** de app kijkt elke 12 uur bij GitHub naar een nieuwere release en meldt dat in het belletje, in Beheer en in het dagelijkse overzicht per e-mail. Tab *Updates* met release-notities.
+- **Zelf bijwerken** (niet bij Docker): downloadt de release, controleert SHA-256, paden en inhoud, maakt eerst een back-up van database en programmacode, past toe, herstart en zet bij een fout automatisch terug. Zie `docs/ADMIN.md#updates`.
+- Instellingen `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` en `HB_UPDATE_REPO`.
+
+### Upgraden van 3.9.1
+Geen databasemigratie. Bouw opnieuw (`docker compose up -d --build`) of kopieer de nieuwe bestanden.
+
 ## [3.9.1] - 2026-10-24
 
 ### Toegevoegd

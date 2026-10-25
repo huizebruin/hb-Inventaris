@@ -74,3 +74,17 @@ Optionally `SMTP_FROM`, `HB_MAIL_DIGEST_TIME`, `HB_MAIL_EXPIRY_DAYS`, `HB_MAIL_A
 - *Admin → Overview* has buttons for a test email and to send the digest right away. Errors are in the log (category `mail`).
 
 The password is only stored in `.env`; the app never displays it.
+
+## Updates
+
+Every 12 hours the app checks GitHub for a newer release. If there is one, you get a notification in the bell (⬆ New version …),
+a card in *Admin → Overview*, a line in the daily email digest and an **Updates** tab with the release notes.
+
+- **Docker:** the app can't update itself. The tab shows the commands (`git pull` and `docker compose up -d --build`); database and media are kept.
+- **Windows / without Docker:** the *Update to …* button downloads the release zip, verifies the SHA-256 checksum, the paths and the contents, makes **a backup first**
+  of the database (`…-pre-update.db`) and the program code (`code-<version>-….zip` in the backup folder, the last 3 are kept), replaces the program files and restarts the app.
+  `data/`, `media/`, `backups/`, `.env` and the start file are left untouched. If anything goes wrong it is rolled back automatically. Migrations run on restart (with their own backup).
+- **Manual rollback:** unzip the `code-…zip` from the backup folder over the program folder and start the app; if needed also restore the `…-pre-update.db` via *Backups*.
+- **Turning it off:** `HB_UPDATE_CHECK=0` (no contact with GitHub) or `HB_UPDATE_INSTALL=0` (notify only, never update by itself). With an `HB_ADMIN_TOKEN` set, that token is also required to update.
+
+Only releases from the configured repository (`HB_UPDATE_REPO`) that include a `.sha256` checksum file are accepted. It is downloaded over HTTPS, but you are running code from GitHub: turn updating off if you don't want that.

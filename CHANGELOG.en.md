@@ -5,6 +5,16 @@
 All notable changes. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Update notification:** every 12 hours the app checks GitHub for a newer release and tells you in the bell, in Admin and in the daily email digest. *Updates* tab with release notes.
+- **Self-update** (not with Docker): downloads the release, verifies SHA-256, paths and contents, first backs up the database and program code, applies it, restarts and rolls back automatically on error. See `docs/ADMIN.en.md#updates`.
+- Settings `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` and `HB_UPDATE_REPO`.
+
+### Upgrading from 3.9.1
+No database migration. Rebuild (`docker compose up -d --build`) or copy the new files.
+
 ## [3.9.1] - 2026-10-24
 
 ### Added

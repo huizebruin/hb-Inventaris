@@ -171,6 +171,8 @@ integriteitsstatus, een controle met herstelacties, back-ups (met retentie en te
 (CSV, Excel, JSON met voorbeeld vóór het opslaan), media-opruiming en het logboek. Zie [docs/ADMIN.md](docs/ADMIN.md).
 Nieuwe optionele instellingen staan in `.env.example`.
 
+**Updates:** de app meldt zelf als er op GitHub een nieuwere versie staat (belletje en tab *Updates*) en kan zich bij installaties zonder Docker met één klik bijwerken, na een automatische back-up. Zie [docs/ADMIN.md](docs/ADMIN.md#updates).
+
 ## Sneltoetsen
 
 Sneltoetsen werken zolang je niet in een invoerveld typt. Een overzicht vind

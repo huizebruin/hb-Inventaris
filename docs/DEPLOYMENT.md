@@ -122,6 +122,12 @@ Praktische tips:
 - Zorg dat bestanden leesbaar zijn voor de container-gebruiker (bijv. `chmod -R a+rX media`).
 - Een share met gastschrijfrechten betekent dat iedereen in je LAN bestanden kan plaatsen; gebruik een gebruiker met wachtwoord.
 
+## 5b. Updates en uitgaand verkeer
+
+De app maakt zelf alleen verbinding met GitHub (updatecontrole, elke 12 uur) en – als je die hebt ingesteld – met Gemini, Telegram en je SMTP-server.
+Zelf bijwerken downloadt programmacode van GitHub en voert die uit. Draai je de app in een streng afgeschermd netwerk, of wil je dat niet: zet `HB_UPDATE_INSTALL=0`
+(alleen melden) of `HB_UPDATE_CHECK=0` (niets) in `.env`. Bij Docker kan de app zich sowieso niet zelf bijwerken.
+
 ## 6. Na een incident
 
 1. Zet de app uit (`docker compose stop`).

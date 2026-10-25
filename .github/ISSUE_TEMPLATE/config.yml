@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Beveiligingsprobleem melden / Report a vulnerability
+    url: https://github.com/huizebruin/hb-Inventaris/security/advisories/new
+    about: Meld kwetsbaarheden privé, niet als openbaar issue. / Report vulnerabilities privately, not as a public issue.
+  - name: Documentatie / Documentation
+    url: https://github.com/huizebruin/hb-Inventaris/tree/main/docs
+    about: Beheer, back-ups en veilig draaien / Admin, backups and secure deployment

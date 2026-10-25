@@ -1,0 +1,19 @@
+name: Idee of wens / Feature request
+description: Een verbetering of nieuwe functie voorstellen / Suggest an improvement or new feature
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Wat wil je kunnen doen? / What do you want to be able to do?
+      description: Beschrijf het probleem of de situatie, niet alleen de oplossing. / Describe the problem or situation, not only the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Hoe zie je dat voor je? / How do you picture it?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatieven / Alternatives considered

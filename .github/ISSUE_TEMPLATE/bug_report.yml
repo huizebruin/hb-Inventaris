@@ -1,0 +1,42 @@
+name: Fout melden / Bug report
+description: Iets werkt niet zoals het hoort / Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bedankt voor je melding! NL of EN is prima. / Thanks for reporting! Dutch or English is fine.
+        Beveiligingsproblemen graag privé melden, zie SECURITY.md. / Please report security issues privately, see SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: Wat gebeurt er? / What happens?
+      description: Wat zag je, en wat verwachtte je? / What did you see, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Stappen om het te reproduceren / Steps to reproduce
+      placeholder: "1. Open ...\n2. Klik op ...\n3. ..."
+  - type: input
+    id: version
+    attributes:
+      label: Versie / Version
+      description: "Menu → Beheer & gezondheid → Overzicht (bijv. 3.9.1) / Menu → Admin & health → Overview"
+  - type: dropdown
+    id: how
+    attributes:
+      label: Hoe draai je de app? / How do you run the app?
+      options: [Docker, Windows (.bat), Anders / Other]
+  - type: dropdown
+    id: lang
+    attributes:
+      label: Taal van de app / App language
+      options: [Nederlands, English]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logboek of schermafbeelding / Log or screenshot
+      description: "Beheer → Logboek (filter op fouten) helpt veel. Haal geheimen weg! / Admin → Log (errors only) helps a lot. Remove secrets!"
+      render: shell

@@ -14,6 +14,7 @@ versies volgens [SemVer](https://semver.org/lang/nl/).
 - Instellingen `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` en `HB_UPDATE_REPO`.
 
 ### Gewijzigd
+- `.env` wordt nu ook gelezen uit de map naast `server.py` (naast `data/.env`); aanhalingstekens en BOM worden netjes verwerkt. De melding bij een ontbrekende `GEMINI_API_KEY` wijst nu de juiste plek aan.
 - De controle *Prijsregels met een leverancier die niet (meer) bestaat* legt nu uit wat er aan de hand is, vergelijkt ID's tolerant (tekst "3" = getal 3, lege waarden worden genegeerd) en heeft een herstelknop die de verwijzende regels verwijdert (met voorbeeld, automatische back-up en logboek).
 
 ### Upgraden van 3.9.1

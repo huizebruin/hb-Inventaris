@@ -14,6 +14,7 @@ versions follow [SemVer](https://semver.org/).
 - Settings `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` and `HB_UPDATE_REPO`.
 
 ### Changed
+- `.env` is now also read from the folder next to `server.py` (besides `data/.env`); quotes and BOM are handled. The message for a missing `GEMINI_API_KEY` now points to the right place.
 - The check *Price lines with a supplier that no longer exists* now explains the problem, compares IDs tolerantly (text "3" = number 3, empty values ignored) and has a repair button that removes the referencing lines (with preview, automatic backup and log).
 
 ### Upgrading from 3.9.1

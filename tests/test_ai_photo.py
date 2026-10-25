@@ -40,3 +40,20 @@ def test_estimate_and_multiple_types_flags(srv, client, monkeypatch):
 
 def test_missing_image_is_400(client):
     assert client.post('/api/ai/photo-lookup', json={}).status_code == 400
+
+
+def test_missing_key_gives_actionable_message(srv, client, monkeypatch):
+    monkeypatch.setattr(srv, 'GEMINI_API_KEY', '')
+    r = client.post('/api/ai/photo-lookup', json={'image_base64': IMG, 'mime_type': 'image/png'})
+    assert r.status_code == 400 and 'GEMINI_API_KEY' in r.get_json()['error'] and '.env' in r.get_json()['error']
+
+
+def test_env_file_next_to_server_is_read(tmp_path):
+    import subprocess, sys, shutil, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    d = tmp_path / 'app'; d.mkdir()
+    shutil.copy(root / 'server.py', d / 'server.py')
+    (d / '.env').write_text('GEMINI_API_KEY="abc123"\n', encoding='utf-8')
+    out = subprocess.run([sys.executable, '-c', 'import os;os.environ.pop("GEMINI_API_KEY",None);import server;print(server.GEMINI_API_KEY)'],
+                         cwd=d, capture_output=True, text=True, env={**__import__('os').environ, 'HB_DATA_DIR': str(d / 'data'), 'HB_BACKUP_DIR': str(d / 'b'), 'HB_MEDIA_DIR': str(d / 'm'), 'PYTHONPATH': str(d)})
+    assert out.stdout.strip().endswith('abc123'), out.stderr[-500:]

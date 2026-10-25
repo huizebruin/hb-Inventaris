@@ -34,13 +34,19 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get('HB_DATA_DIR', BASE_DIR / 'data'))
 DATA_DIR.mkdir(exist_ok=True, parents=True)
 
-_env_file = DATA_DIR / '.env'
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith('#') and '=' in line:
-            k, v = line.split('=', 1)
-            os.environ.setdefault(k.strip(), v.strip())
+# Volgorde: echte omgevingsvariabelen (Docker env_file) > data/.env > .env naast server.py
+ENV_FILES_LOADED = []
+for _env_file in (DATA_DIR / '.env', BASE_DIR / '.env'):
+    if _env_file.is_file():
+        ENV_FILES_LOADED.append(str(_env_file))
+        for line in _env_file.read_text(encoding='utf-8-sig').splitlines():
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                k, v = line.split('=', 1)
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in '"\'':
+                    v = v[1:-1]
+                os.environ.setdefault(k.strip(), v)
 
 import urllib.request
 import urllib.error
@@ -775,7 +781,7 @@ def _call_gemini(prompt, max_tokens=2000, thinking_level='low', image_b64=None, 
     Retourneert (parsed_dict, None) bij succes, of (None, (error_dict, status_code)) bij fout.
     Geef image_b64/image_mime mee voor een multimodale (foto) aanvraag."""
     if not GEMINI_API_KEY:
-        return _ai_fail('Geen GEMINI_API_KEY ingesteld in data/.env', 400)
+        return _ai_fail('Geen GEMINI_API_KEY gevonden. Zet GEMINI_API_KEY=... in .env (naast docker-compose.yml of in data/.env) en start de app opnieuw; bij Docker: docker compose up -d (niet alleen restart).', 400)
 
     content_parts = []
     if image_b64:

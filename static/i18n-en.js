@@ -1,5 +1,6 @@
 /* Woordenboek Nederlands → Engels (automatisch gegenereerd, handmatig aan te vullen). {0},{1} = variabele delen. */
 window.HB_I18N_EN = {
+"Geen GEMINI_API_KEY gevonden. Zet GEMINI_API_KEY=... in .env (naast docker-compose.yml of in data/.env) en start de app opnieuw; bij Docker: docker compose up -d (niet alleen restart).":"No GEMINI_API_KEY found. Set GEMINI_API_KEY=... in .env (next to docker-compose.yml or in data/.env) and restart the app; with Docker: docker compose up -d (not just restart).",
 "Nieuw onderdeel via foto":"New part via photo",
 "⚠ Er staan meerdere soorten onderdelen op de foto. Hieronder staat alleen het duidelijkste soort; maak per soort een aparte foto voor het beste resultaat.":"⚠ There are several kinds of parts in the photo. Below is only the clearest kind; take a separate photo per kind for the best result.",
 "Aantal: niet te bepalen op de foto — vul de voorraad zelf in.":"Quantity: can't be determined from the photo — enter the stock yourself.",

@@ -22,7 +22,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from werkzeug.exceptions import HTTPException
 
-APP_VERSION = '3.9.1'
+APP_VERSION = '3.9.2'
 APP_BUILD = os.environ.get('HB_BUILD', 'dev')
 START_TIME = time.time()
 START_DT = datetime.now(timezone.utc)
@@ -34,13 +34,19 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get('HB_DATA_DIR', BASE_DIR / 'data'))
 DATA_DIR.mkdir(exist_ok=True, parents=True)
 
-_env_file = DATA_DIR / '.env'
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith('#') and '=' in line:
-            k, v = line.split('=', 1)
-            os.environ.setdefault(k.strip(), v.strip())
+# Volgorde: echte omgevingsvariabelen (Docker env_file) > data/.env > .env naast server.py
+ENV_FILES_LOADED = []
+for _env_file in (DATA_DIR / '.env', BASE_DIR / '.env'):
+    if _env_file.is_file():
+        ENV_FILES_LOADED.append(str(_env_file))
+        for line in _env_file.read_text(encoding='utf-8-sig').splitlines():
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                k, v = line.split('=', 1)
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in '"\'':
+                    v = v[1:-1]
+                os.environ.setdefault(k.strip(), v)
 
 import urllib.request
 import urllib.error
@@ -76,6 +82,8 @@ def _env_num(name, default, cast=int):
 
 BACKUP_RETENTION_DAYS = _env_num('HB_BACKUP_RETENTION_DAYS', 14)   # backups ouder dan dit worden opgeruimd
 BACKUP_KEEP_MIN       = _env_num('HB_BACKUP_KEEP_MIN', 3)          # minimaal zoveel (geldige) backups blijven altijd staan
+PRICE_ALERT_PCT       = _env_num('HB_PRICE_ALERT_PCT', 10, float)   # prijsstijging vanaf dit percentage geeft een melding (0 = uit)
+PRICE_ALERT_DAYS      = _env_num('HB_PRICE_ALERT_DAYS', 14)         # zo lang blijft een prijsstijging in het belletje staan
 BACKUP_TIME           = os.environ.get('HB_BACKUP_TIME', '00:00')  # dagelijks tijdstip (HH:MM, lokale tijd)
 BACKUP_STALE_HOURS    = _env_num('HB_BACKUP_STALE_HOURS', 36)      # backup ouder dan dit = "niet actueel"
 DISK_WARN_PCT         = _env_num('HB_DISK_WARN_PCT', 85)
@@ -499,10 +507,25 @@ def _migrate_3_expiry(db):
     """De frontend stuurt expiryDate al mee, maar de server sloeg het nog niet op."""
     _add_column(db, 'parts', 'expiryDate', "TEXT DEFAULT ''")
 
+def _migrate_4_value_prices(db):
+    """Voorraadwaarde per dag en prijslog (voor de grafiek en prijsstijgingsmeldingen)."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS value_snapshots (
+            day TEXT PRIMARY KEY, value REAL NOT NULL DEFAULT 0, parts INTEGER DEFAULT 0, items INTEGER DEFAULT 0, estimated INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS price_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, partId INTEGER, suppId INTEGER, sku TEXT DEFAULT '',
+            price REAL NOT NULL, prev REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_price_log_part ON price_log(partId);
+        CREATE INDEX IF NOT EXISTS idx_price_log_ts ON price_log(ts);
+    """)
+
 MIGRATIONS = [
     (1, 'Basiskolommen (projects.buildHistory/extra, history.price_paid/suppId)', _migrate_1_baseline),
     (2, 'Indexen op parts en history', _migrate_2_indexes),
     (3, 'parts.expiryDate (verloopdatum wordt nu echt opgeslagen)', _migrate_3_expiry),
+    (4, 'Voorraadwaarde per dag en prijslog', _migrate_4_value_prices),
 ]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -657,6 +680,9 @@ def appcss(): return send_file('static/app.css', mimetype='text/css; charset=utf
 @app.route('/app.js')
 def appjs(): return send_file('static/app.js', mimetype='text/javascript')
 
+@app.route('/vendor/<path:filename>')
+def vendor_files(filename): return send_from_directory('static/vendor', filename, max_age=86400)
+
 @app.route('/fonts/<path:filename>')
 def fonts(filename): return send_from_directory('static/fonts', filename)
 
@@ -700,6 +726,7 @@ def add_part():
             p.get('expiryDate','') or ''
         ))
         set_meta(db, 'nextId', nid + 1)
+        log_price_changes(db, nid, [], p.get('suppliers', []))
         return jsonify(part_to_dict(db.execute('SELECT * FROM parts WHERE id=?',(nid,)).fetchone())), 201
 
 @app.route('/api/parts/<int:pid>', methods=['PUT'])
@@ -721,6 +748,8 @@ def update_part(pid):
             json.dumps(p.get('tags',_jlist(row['tags'], pid, 'tags'))),
             p.get('expiryDate', row['expiryDate'] if 'expiryDate' in row.keys() else '') or '', pid
         ))
+        if 'suppliers' in p:
+            log_price_changes(db, pid, _jlist(row['suppliers'], pid, 'suppliers'), p['suppliers'])
         return jsonify(part_to_dict(db.execute('SELECT * FROM parts WHERE id=?',(pid,)).fetchone()))
 
 @app.route('/api/parts/<int:pid>', methods=['DELETE'])
@@ -775,7 +804,7 @@ def _call_gemini(prompt, max_tokens=2000, thinking_level='low', image_b64=None, 
     Retourneert (parsed_dict, None) bij succes, of (None, (error_dict, status_code)) bij fout.
     Geef image_b64/image_mime mee voor een multimodale (foto) aanvraag."""
     if not GEMINI_API_KEY:
-        return _ai_fail('Geen GEMINI_API_KEY ingesteld in data/.env', 400)
+        return _ai_fail('Geen GEMINI_API_KEY gevonden. Zet GEMINI_API_KEY=... in .env (naast docker-compose.yml of in data/.env) en start de app opnieuw; bij Docker: docker compose up -d (niet alleen restart).', 400)
 
     content_parts = []
     if image_b64:
@@ -989,7 +1018,9 @@ Beschikbare categorieën (ID: Naam), kies de best passende:
 {cat_list}
 
 Antwoord ALLEEN met een geldig JSON-object, zonder markdown-opmaak:
-{{"name": "<korte herkenbare naam, bv. '10k Ohm weerstand' of 'ESP32-WROOM-32 module'>", "value": "<waarde indien van toepassing, leeg als n.v.t.>", "brand": "<merk indien zichtbaar/herkenbaar, anders leeg>", "package": "<behuizing/package die je op de foto ziet>", "extra_info": "<overige zichtbare specs, opdruk/tekst, kleurcodes, bijzonderheden — kort>", "category_id": <best passende categorie-ID uit de lijst hierboven, of null>, "confidence": "hoog, gemiddeld of laag", "found": true of false}}
+{{"name": "<korte herkenbare naam, bv. '10k Ohm weerstand' of 'ESP32-WROOM-32 module'>", "value": "<waarde indien van toepassing, leeg als n.v.t.>", "brand": "<merk indien zichtbaar/herkenbaar, anders leeg>", "package": "<behuizing/package die je op de foto ziet>", "extra_info": "<overige zichtbare specs, opdruk/tekst, kleurcodes, bijzonderheden — kort>", "category_id": <best passende categorie-ID uit de lijst hierboven, of null>, "confidence": "hoog, gemiddeld of laag", "quantity": <aantal losse stuks van dit onderdeel dat je op de foto ziet, als geheel getal, of null>, "quantity_basis": "geteld, geschat of onbekend", "multiple_types": true of false, "others": [], "found": true of false}}
+
+Regels voor het aantal: tel alleen stuks die je echt kunt onderscheiden. Zie je ze allemaal duidelijk, zet quantity_basis op "geteld". Liggen ze door elkaar of deels over elkaar, geef dan je beste schatting met "geschat". Zijn het er niet te tellen (rol, zakje vol, lint, bulk, onderdelen die verborgen zijn) of staat er maar een deel van de voorraad op, zet quantity op null en quantity_basis op "onbekend". Staat er een aantal op het etiket of de verpakking (bv. "100 pcs"), gebruik dat en zet "geteld". Staan er meerdere SOORTEN onderdelen op de foto, zet multiple_types op true, beschrijf in de hoofdvelden het duidelijkste of grootste soort en zet elk ander soort in "others" (maximaal 7), elk met dezelfde velden: {{"name","value","brand","package","extra_info","category_id","confidence","quantity","quantity_basis"}}. Staat er maar één soort op, laat "others" dan leeg.
 
 Als je het onderdeel niet met voldoende zekerheid kunt identificeren, zet found op false en laat de overige velden leeg. Verzin niets dat je niet op de foto kunt zien."""
 
@@ -997,25 +1028,33 @@ Als je het onderdeel niet met voldoende zekerheid kunt identificeren, zet found 
     if err:
         return jsonify(err[0]), err[1]
 
-    cat_id = parsed.get('category_id')
-    try:
-        cat_id = int(cat_id) if cat_id is not None else None
-    except (TypeError, ValueError):
-        cat_id = None
-    if cat_id is not None and cat_id not in cat_by_id:
-        cat_id = None
-
-    return jsonify({
-        'name':          str(parsed.get('name', '') or ''),
-        'value':         str(parsed.get('value', '') or ''),
-        'brand':         str(parsed.get('brand', '') or ''),
-        'package':       str(parsed.get('package', '') or ''),
-        'extra_info':    str(parsed.get('extra_info', '') or ''),
-        'category_id':   cat_id,
-        'category_name': cat_by_id.get(cat_id, ''),
-        'confidence':    str(parsed.get('confidence', '') or ''),
-        'found':         bool(parsed.get('found', False)),
-    })
+    def clean(d, found=True):
+        d = d if isinstance(d, dict) else {}
+        cid = d.get('category_id')
+        try: cid = int(cid) if cid is not None else None
+        except (TypeError, ValueError): cid = None
+        if cid is not None and cid not in cat_by_id: cid = None
+        qty = d.get('quantity')
+        try: qty = int(float(qty)) if qty is not None and not isinstance(qty, bool) else None
+        except (TypeError, ValueError): qty = None
+        if qty is not None and not (0 <= qty <= 100000): qty = None
+        basis = str(d.get('quantity_basis', '') or '').strip().lower()
+        if basis not in ('geteld', 'geschat'): qty = None; basis = 'onbekend'
+        return {
+            'quantity': qty, 'quantity_basis': basis,
+            'name': str(d.get('name', '') or '')[:200], 'value': str(d.get('value', '') or '')[:200],
+            'brand': str(d.get('brand', '') or '')[:200], 'package': str(d.get('package', '') or '')[:200],
+            'extra_info': str(d.get('extra_info', '') or '')[:1000],
+            'category_id': cid, 'category_name': cat_by_id.get(cid, ''),
+            'confidence': str(d.get('confidence', '') or '')[:40],
+            'found': bool(d.get('found', found)),
+        }
+    out = clean(parsed, found=False)
+    raw_others = parsed.get('others') if isinstance(parsed.get('others'), list) else []
+    others = [clean(o) for o in raw_others if isinstance(o, dict) and str(o.get('name', '')).strip()][:7]
+    out['others'] = others
+    out['multiple_types'] = bool(parsed.get('multiple_types', False)) or bool(others)
+    return jsonify(out)
 
 
 @app.route('/api/ai/suggest-replacement', methods=['POST'])
@@ -1968,6 +2007,363 @@ def backup_status():
             'scheduler_running': BACKUP_STATE['scheduler'],
             'retention': {'days': BACKUP_RETENTION_DAYS, 'keep_min': BACKUP_KEEP_MIN}}
 
+# ── VOORRAADWAARDE IN DE TIJD + PRIJSLOG ──────────────────────
+def unit_price(suppliers):
+    """Laagste positieve prijs van de leveranciersregels (zelfde regel als het dashboard)."""
+    prices = []
+    for x in suppliers or []:
+        try:
+            v = float(x.get('price') or 0) if isinstance(x, dict) else 0
+        except (TypeError, ValueError):
+            v = 0
+        if v > 0: prices.append(v)
+    return min(prices) if prices else 0.0
+
+def _line_key(x):
+    return (str(x.get('suppId')), str(x.get('sku') or ''))
+
+def log_price_changes(db, part_id, old_lines, new_lines):
+    """Legt vast wanneer een prijs bij een leverancier verandert (of voor het eerst wordt ingevuld)."""
+    try:
+        old = {}
+        for x in old_lines or []:
+            if isinstance(x, dict) and x.get('suppId') not in (None, ''):
+                old[_line_key(x)] = x.get('price')
+        now = datetime.now(timezone.utc).isoformat()
+        for x in new_lines or []:
+            if not isinstance(x, dict) or x.get('suppId') in (None, ''): continue
+            try: price = float(x.get('price') or 0)
+            except (TypeError, ValueError): continue
+            if price <= 0: continue
+            prev = old.get(_line_key(x))
+            try: prev = float(prev) if prev not in (None, '') else None
+            except (TypeError, ValueError): prev = None
+            if prev is not None and abs(prev - price) < 1e-9: continue
+            try: sid = int(x.get('suppId'))
+            except (TypeError, ValueError): sid = None
+            db.execute('INSERT INTO price_log (ts,partId,suppId,sku,price,prev) VALUES (?,?,?,?,?,?)',
+                       (now, part_id, sid, str(x.get('sku') or '')[:100], price, prev if prev and prev > 0 else None))
+    except Exception as e:
+        log_event('db', 'warning', f'Prijslog niet bijgewerkt voor onderdeel {part_id}: {e}')
+
+def price_increases(days=None, pct=None, since_hours=None):
+    """Prijsstijgingen van minstens `pct` procent, nieuwste per onderdeel/leverancier."""
+    pct = PRICE_ALERT_PCT if pct is None else pct
+    if pct <= 0: return []
+    cutoff = (datetime.now(timezone.utc) - (timedelta(hours=since_hours) if since_hours else timedelta(days=days or PRICE_ALERT_DAYS))).isoformat()
+    out, seen = [], set()
+    with db_conn() as db:
+        sn = {r['id']: r['name'] for r in db.execute('SELECT id,name FROM suppliers').fetchall()}
+        pn = {r['id']: r['name'] for r in db.execute('SELECT id,name FROM parts').fetchall()}
+        for r in db.execute('SELECT * FROM price_log WHERE ts>=? ORDER BY ts DESC', (cutoff,)).fetchall():
+            k = (r['partId'], r['suppId'], r['sku'])
+            if k in seen: continue
+            seen.add(k)
+            if not r['prev'] or r['prev'] <= 0 or r['partId'] not in pn: continue
+            change = (r['price'] - r['prev']) / r['prev'] * 100
+            if change + 1e-9 >= pct:
+                out.append({'partId': r['partId'], 'part': pn[r['partId']], 'suppId': r['suppId'], 'supplier': sn.get(r['suppId'], ''),
+                            'prev': r['prev'], 'price': r['price'], 'pct': round(change, 1), 'ts': r['ts']})
+    return sorted(out, key=lambda x: -x['pct'])
+
+def stock_value_now(db):
+    value, n_parts, n_items = 0.0, 0, 0
+    for r in db.execute('SELECT stock,suppliers,id FROM parts WHERE active=1').fetchall():
+        st = int(r['stock'] or 0)
+        if st <= 0: continue
+        n_items += st
+        pr = unit_price(_jlist(r['suppliers'], r['id'], 'suppliers'))
+        if pr > 0: value += pr * st; n_parts += 1
+    return round(value, 2), n_parts, n_items
+
+def take_value_snapshot():
+    """Slaat de voorraadwaarde van vandaag op (laatste meting van de dag wint)."""
+    with db_conn() as db:
+        v, n, it = stock_value_now(db)
+        day = datetime.now().date().isoformat()
+        db.execute('INSERT OR REPLACE INTO value_snapshots (day,value,parts,items,estimated) VALUES (?,?,?,?,0)', (day, v, n, it))
+    return {'day': day, 'value': v}
+
+def backfill_value_history(max_days=400):
+    """Eenmalig: reconstrueert eerdere dagen uit de mutatiegeschiedenis (huidige prijzen; gemarkeerd als schatting)."""
+    with db_conn() as db:
+        if db.execute('SELECT COUNT(*) FROM value_snapshots').fetchone()[0]: return 0
+        hist = db.execute('SELECT ts,partId,delta FROM history WHERE delta IS NOT NULL AND partId IS NOT NULL ORDER BY ts DESC').fetchall()
+        if not hist: return 0
+        stock, price = {}, {}
+        for r in db.execute('SELECT id,stock,suppliers FROM parts WHERE active=1').fetchall():
+            stock[r['id']] = int(r['stock'] or 0); price[r['id']] = unit_price(_jlist(r['suppliers'], r['id'], 'suppliers'))
+        by_day = {}
+        for h in hist: by_day.setdefault(str(h['ts'])[:10], []).append(h)
+        first = min(by_day)
+        day = datetime.now().date()
+        n = 0
+        while day.isoformat() >= first and n < max_days:
+            d = day.isoformat()
+            if d != datetime.now().date().isoformat():   # vandaag komt van de echte meting
+                val = sum(max(0, stock[i]) * price[i] for i in stock)
+                db.execute('INSERT OR IGNORE INTO value_snapshots (day,value,parts,items,estimated) VALUES (?,?,?,?,1)',
+                           (d, round(val, 2), sum(1 for i in stock if stock[i] > 0 and price[i] > 0), sum(max(0, v) for v in stock.values())))
+                n += 1
+            for h in by_day.get(d, []):          # stand aan het begin van deze dag = stand eind vorige dag
+                if h['partId'] in stock: stock[h['partId']] -= int(h['delta'] or 0)
+            day -= timedelta(days=1)
+        return n
+
+def value_loop():
+    try:
+        if BACKUP_STOP.wait(30): return
+        try:
+            n = backfill_value_history()
+            if n: log_event('stats', 'info', f'Voorraadwaarde van {n} eerdere dagen geschat uit de mutatiegeschiedenis')
+        except Exception as e:
+            log_event('stats', 'warning', f'Terugrekenen voorraadwaarde mislukt: {e}')
+        while not BACKUP_STOP.is_set():
+            try: take_value_snapshot()
+            except Exception as e: log_event('stats', 'warning', f'Voorraadwaarde vastleggen mislukt: {e}')
+            if BACKUP_STOP.wait(3 * 3600): return
+    except Exception as e:
+        log_event('stats', 'error', f'Waardemeting gestopt: {e}')
+
+@app.route('/api/stats/value')
+def api_stats_value():
+    days = max(7, min(int(request.args.get('days', 90) or 90), 800))
+    since = (datetime.now().date() - timedelta(days=days)).isoformat()
+    with db_conn() as db:
+        pts = [{'day': r['day'], 'value': r['value'], 'estimated': bool(r['estimated'])}
+               for r in db.execute('SELECT * FROM value_snapshots WHERE day>=? ORDER BY day', (since,)).fetchall()]
+        v, n, it = stock_value_now(db)
+    today = datetime.now().date().isoformat()
+    if not pts or pts[-1]['day'] != today: pts.append({'day': today, 'value': v, 'estimated': False})
+    else: pts[-1]['value'] = v
+    return jsonify({'points': pts, 'current': {'value': v, 'priced_parts': n, 'items': it}})
+
+@app.route('/api/prices/changes')
+def api_price_changes():
+    try: pct = float(request.args.get('min_pct')) if request.args.get('min_pct') not in (None, '') else None
+    except ValueError: pct = None
+    try: days = int(request.args.get('days')) if request.args.get('days') else None
+    except ValueError: days = None
+    return jsonify({'min_pct': PRICE_ALERT_PCT if pct is None else pct, 'items': price_increases(days=days, pct=pct)})
+
+@app.route('/api/prices/part/<int:pid>')
+def api_price_part(pid):
+    with db_conn() as db:
+        sn = {r['id']: r['name'] for r in db.execute('SELECT id,name FROM suppliers').fetchall()}
+        rows = db.execute('SELECT ts,suppId,sku,price,prev FROM price_log WHERE partId=? ORDER BY ts DESC LIMIT 200', (pid,)).fetchall()
+    return jsonify([{'ts': r['ts'], 'suppId': r['suppId'], 'supplier': sn.get(r['suppId'], ''), 'sku': r['sku'], 'price': r['price'], 'prev': r['prev']} for r in rows])
+
+# ── UPDATES (controle op nieuwe versie + optioneel zelf bijwerken) ──
+# De app vraagt (standaard elke 12 uur) bij GitHub de nieuwste release op (alleen de gewone publieke API, er wordt niets van jou verstuurd).
+# Uitzetten: HB_UPDATE_CHECK=0. Zelf bijwerken uit de app kan niet bij Docker (daar bouw je de image opnieuw), en uit te zetten met HB_UPDATE_INSTALL=0.
+UPDATE_CHECK      = os.environ.get('HB_UPDATE_CHECK', '1').strip().lower() not in ('0', 'false', 'no', 'off', '')
+UPDATE_INSTALL    = os.environ.get('HB_UPDATE_INSTALL', '1').strip().lower() not in ('0', 'false', 'no', 'off', '')
+UPDATE_REPO       = os.environ.get('HB_UPDATE_REPO', 'huizebruin/hb-Inventaris').strip()
+UPDATE_INTERVAL_H = 12
+UPDATE_MAX_MB     = 60
+CODE_DIR          = BASE_DIR
+UPDATE_STATE      = {'checked_at': None, 'latest': None, 'url': None, 'notes': '', 'published': None, 'zip_url': None, 'sha_url': None, 'error': None}
+UPDATE_LOCK       = threading.Lock()
+# Alleen deze onderdelen worden bij een update overschreven; data/, media/, backups/, .env en het .bat-bestand blijven altijd ongemoeid.
+UPDATE_PATHS      = ('server.py', 'requirements.txt', 'static', 'docs', 'README.md', 'README.en.md', 'CHANGELOG.md', 'CHANGELOG.en.md',
+                     'LICENSE', '.env.example', 'Dockerfile', 'docker-compose.yml')
+
+def parse_version(v):
+    m = re.match(r'^v?(\d+)\.(\d+)\.(\d+)', str(v or '').strip())
+    return tuple(int(x) for x in m.groups()) if m else None
+
+def in_docker():
+    return os.path.exists('/.dockerenv') or os.environ.get('HB_DOCKER', '') == '1'
+
+def _http_get(url, timeout=10, accept=None, max_bytes=None):
+    req = urllib.request.Request(url, headers={'User-Agent': f'HB-Inventaris/{APP_VERSION}', 'Accept': accept or '*/*'})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read(max_bytes + 1) if max_bytes else r.read()
+    if max_bytes and len(data) > max_bytes: raise ValueError('Download is groter dan toegestaan')
+    return data
+
+def check_update(force=False):
+    """Haalt de nieuwste GitHub-release op (gecached). Geeft altijd de huidige status terug, ook bij een netwerkfout."""
+    if not UPDATE_CHECK: return update_status()
+    with UPDATE_LOCK:
+        last = UPDATE_STATE['checked_at']
+        if last and time.time() - last < (60 if force else UPDATE_INTERVAL_H * 3600): return update_status()
+        UPDATE_STATE['checked_at'] = time.time()
+        try:
+            rel = json.loads(_http_get(f'https://api.github.com/repos/{UPDATE_REPO}/releases/latest', accept='application/vnd.github+json', max_bytes=2_000_000))
+            tag = str(rel.get('tag_name') or '')
+            if not parse_version(tag): raise ValueError(f'Onbekend versienummer in release: {tag!r}')
+            ver = '.'.join(map(str, parse_version(tag)))
+            assets = {a.get('name'): a.get('browser_download_url') for a in rel.get('assets', []) if isinstance(a, dict)}
+            zip_name = f'hb-inventaris-{ver}.zip'
+            prev = UPDATE_STATE['latest']
+            UPDATE_STATE.update(latest=ver, url=rel.get('html_url') or f'https://github.com/{UPDATE_REPO}/releases', notes=str(rel.get('body') or '')[:6000],
+                                published=rel.get('published_at'), zip_url=assets.get(zip_name), sha_url=assets.get(zip_name + '.sha256'), error=None)
+            if prev != ver and parse_version(ver) > (parse_version(APP_VERSION) or (0, 0, 0)):
+                log_event('update', 'info', f'Nieuwe versie beschikbaar: {ver} (huidig {APP_VERSION})')
+        except Exception as e:
+            UPDATE_STATE['error'] = str(e)[:200]
+            log_event('update', 'warning', f'Updatecontrole mislukt: {e}')
+    return update_status()
+
+def update_status():
+    cur, lat = parse_version(APP_VERSION), parse_version(UPDATE_STATE['latest'])
+    available = bool(UPDATE_CHECK and cur and lat and lat > cur)
+    reason, cmds = '', None
+    if not UPDATE_CHECK: reason = 'check_disabled'
+    elif in_docker():
+        reason = 'docker'
+        cmds = ['git pull', 'docker compose up -d --build']
+    elif not UPDATE_INSTALL: reason = 'install_disabled'
+    elif not os.access(CODE_DIR, os.W_OK) or not os.access(CODE_DIR / 'server.py', os.W_OK): reason = 'not_writable'
+    elif available and not (UPDATE_STATE['zip_url'] and UPDATE_STATE['sha_url']): reason = 'no_package'
+    return {'enabled': UPDATE_CHECK, 'current': APP_VERSION, 'latest': UPDATE_STATE['latest'], 'available': available, 'url': UPDATE_STATE['url'],
+            'notes': UPDATE_STATE['notes'], 'published': UPDATE_STATE['published'], 'error': UPDATE_STATE['error'],
+            'checked_at': datetime.fromtimestamp(UPDATE_STATE['checked_at']).isoformat(timespec='seconds') if UPDATE_STATE['checked_at'] else None,
+            'install_possible': not reason, 'install_blocked': reason, 'commands': cmds, 'repo': UPDATE_REPO}
+
+def update_loop():
+    if BACKUP_STOP.wait(90): return
+    while not BACKUP_STOP.is_set():
+        try: check_update()
+        except Exception: pass
+        if BACKUP_STOP.wait(UPDATE_INTERVAL_H * 3600): return
+
+def _code_backup(old_version):
+    """Zip van de huidige programmacode, zodat een update altijd handmatig terug te zetten is."""
+    import zipfile
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    out = BACKUP_DIR / f'code-{old_version}-{datetime.now():%Y%m%d_%H%M%S}.zip'
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        for rel in UPDATE_PATHS:
+            src = CODE_DIR / rel
+            if src.is_file(): z.write(src, rel)
+            elif src.is_dir():
+                for f in src.rglob('*'):
+                    if f.is_file() and '__pycache__' not in f.parts: z.write(f, f.relative_to(CODE_DIR).as_posix())
+    for old in sorted(BACKUP_DIR.glob('code-*.zip'))[:-3]:   # laatste 3 bewaren
+        try: old.unlink()
+        except OSError: pass
+    return out
+
+def _restore_code(zpath):
+    import zipfile
+    with zipfile.ZipFile(zpath) as z:
+        for name in z.namelist():
+            dest = CODE_DIR / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + '.restore')
+            tmp.write_bytes(z.read(name)); os.replace(tmp, dest)
+
+def restart_app(delay=1.5):
+    """Herstart het proces na een update (apart zodat tests dit kunnen vervangen)."""
+    def run():
+        time.sleep(delay)
+        BACKUP_STOP.set()
+        try:
+            if os.name == 'nt':
+                import subprocess
+                helper = ("import subprocess,time,sys\ntime.sleep(3)\nsi=subprocess.STARTUPINFO(); si.dwFlags|=1; si.wShowWindow=6\n"
+                          f"subprocess.Popen([{sys.executable!r}]+{list(sys.argv)!r}, cwd={str(CODE_DIR)!r}, creationflags=0x10, startupinfo=si)\n")
+                subprocess.Popen([sys.executable, '-c', helper], cwd=str(CODE_DIR), creationflags=0x08 | 0x200)
+                os._exit(0)
+            os.environ.pop('WERKZEUG_SERVER_FD', None)   # anders probeert de nieuwe server de oude luistersocket te hergebruiken
+            os.closerange(3, 4096)                       # luistersocket sluiten, anders blijft poort 5000 bezet na de herstart
+            os.chdir(CODE_DIR)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            log_event('update', 'error', f'Herstarten mislukt, start de app handmatig opnieuw: {e}')
+    threading.Thread(target=run, daemon=True, name='hb-restart').start()
+
+def install_update(version):
+    """Downloadt de release, controleert hem (SHA-256, paden, inhoud), maakt een database- en codebackup en past hem toe."""
+    import hashlib, tempfile, zipfile, subprocess, py_compile
+    st = update_status()
+    if not st['install_possible']: raise RuntimeError({'docker': 'Bij Docker kan de app zich niet zelf bijwerken: bouw de image opnieuw.',
+        'install_disabled': 'Zelf bijwerken staat uit (HB_UPDATE_INSTALL=0).', 'not_writable': 'De programmamap is niet beschrijfbaar.',
+        'no_package': 'Deze release heeft geen zip met controlebestand (.sha256).', 'check_disabled': 'Updatecontrole staat uit (HB_UPDATE_CHECK=0).'}.get(st['install_blocked'], 'Niet mogelijk'))
+    if not st['available'] or version != st['latest']: raise RuntimeError('Er is geen nieuwere versie beschikbaar, of de versie komt niet overeen.')
+    base = f'https://github.com/{UPDATE_REPO}/releases/download/'
+    if not (UPDATE_STATE['zip_url'] or '').startswith(base) or not (UPDATE_STATE['sha_url'] or '').startswith(base):
+        raise RuntimeError('Downloadlocatie komt niet van de verwachte GitHub-repository')
+    steps = []
+    tmp = Path(tempfile.mkdtemp(prefix='hb-update-'))
+    code_zip = None
+    try:
+        data = _http_get(UPDATE_STATE['zip_url'], timeout=60, max_bytes=UPDATE_MAX_MB * 1048576)
+        want = _http_get(UPDATE_STATE['sha_url'], timeout=20, max_bytes=4096).decode('utf-8', 'replace').split()[0].strip().lower()
+        got = hashlib.sha256(data).hexdigest()
+        if want != got: raise RuntimeError('Controlesom (SHA-256) klopt niet: download is beschadigd of onbetrouwbaar, niets gewijzigd')
+        steps.append('Download gecontroleerd (SHA-256)')
+        zp = tmp / 'release.zip'; zp.write_bytes(data)
+        prefix = f'hb-inventaris-{version}/'
+        new = tmp / 'new'; new.mkdir()
+        with zipfile.ZipFile(zp) as z:
+            infos = z.infolist()
+            if sum(i.file_size for i in infos) > 300 * 1048576: raise RuntimeError('Zip is onverwacht groot')
+            for i in infos:
+                n = i.filename
+                if not n.startswith(prefix) or '..' in n.split('/') or n.startswith('/') or '\\' in n or ':' in n: raise RuntimeError(f'Onveilig pad in zip: {n}')
+            for i in infos:
+                rel = i.filename[len(prefix):]
+                if not rel or i.is_dir(): continue
+                dest = new / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(z.read(i))
+        srv_new = new / 'server.py'
+        if not srv_new.is_file() or not (new / 'static' / 'app.js').is_file(): raise RuntimeError('Zip bevat niet de verwachte bestanden')
+        m = re.search(r"^APP_VERSION\s*=\s*'([^']+)'", srv_new.read_text(encoding='utf-8'), re.M)
+        if not m or m.group(1) != version: raise RuntimeError(f'Versie in de zip ({m.group(1) if m else "?"}) komt niet overeen met {version}')
+        py_compile.compile(str(srv_new), cfile=str(tmp / 'check.pyc'), doraise=True)
+        steps.append('Inhoud gecontroleerd')
+        pre = do_backup('pre-update')
+        steps.append(f'Databasebackup gemaakt: {pre}')
+        code_zip = _code_backup(APP_VERSION)
+        steps.append(f'Programmacode bewaard: {code_zip.name}')
+        old_req = (CODE_DIR / 'requirements.txt').read_bytes() if (CODE_DIR / 'requirements.txt').exists() else b''
+        for rel in UPDATE_PATHS:
+            src = new / rel
+            if src.is_file():
+                dst = CODE_DIR / rel; dst.parent.mkdir(parents=True, exist_ok=True)
+                t = dst.with_name(dst.name + '.new'); shutil.copyfile(src, t); os.replace(t, dst)
+            elif src.is_dir():
+                for f in src.rglob('*'):
+                    if not f.is_file(): continue
+                    dst = CODE_DIR / rel / f.relative_to(src); dst.parent.mkdir(parents=True, exist_ok=True)
+                    t = dst.with_name(dst.name + '.new'); shutil.copyfile(f, t); os.replace(t, dst)
+        steps.append('Bestanden bijgewerkt')
+        new_req = (CODE_DIR / 'requirements.txt').read_bytes() if (CODE_DIR / 'requirements.txt').exists() else b''
+        if new_req != old_req:
+            r = subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet', '-r', str(CODE_DIR / 'requirements.txt')], capture_output=True, text=True, timeout=600)
+            if r.returncode != 0: raise RuntimeError('Pakketten installeren mislukt: ' + (r.stderr or r.stdout)[-300:])
+            steps.append('Nieuwe pakketten geïnstalleerd')
+    except Exception as e:
+        if code_zip:
+            try: _restore_code(code_zip); steps.append('Teruggezet naar de vorige versie')
+            except Exception as e2: log_event('update', 'error', f'Terugzetten na mislukte update mislukt: {e2}')
+        log_event('update', 'error', f'Update naar {version} mislukt: {e}', stappen=steps)
+        raise
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    log_event('update', 'info', f'Bijgewerkt van {APP_VERSION} naar {version}; herstart volgt', stappen=steps)
+    restart_app()
+    return steps
+
+@app.route('/api/update', methods=['GET'])
+def api_update():
+    return jsonify(check_update(force=request.args.get('refresh') == '1'))
+
+@app.route('/api/admin/update/install', methods=['POST'])
+@admin_required
+def api_update_install():
+    b = V(json_body()).text('version', required=True, max_len=20).boolean('confirm').done()
+    if b.get('confirm') is not True: raise Invalid({'confirm': 'bevestiging ontbreekt'})
+    try:
+        steps = install_update(b['version'])
+    except Exception as e:
+        return jsonify({'error': f'Update mislukt: {e}'}), 500
+    return jsonify({'ok': True, 'steps': steps, 'from': APP_VERSION, 'to': b['version'], 'restarting': True})
+
 # ── E-MAILMELDINGEN (optioneel) ───────────────────────────────
 # Server-side, dus onafhankelijk van een open browser. Instellen in .env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
 # en HB_EMAIL (ontvanger, meerdere gescheiden door komma). Zonder deze waarden gebeurt er niets.
@@ -2044,12 +2440,15 @@ def build_digest():
         exp = db.execute("SELECT id,name,expiryDate FROM parts WHERE active=1 AND expiryDate IS NOT NULL AND expiryDate!='' AND expiryDate<=? ORDER BY expiryDate", (limit,)).fetchall()
     health = full_health(include_media=False)
     probs = [i for i in health['issues'] if i['severity'] in ('error', 'warning')]
-    if not (low or exp or probs): return None
+    upd = update_status() if UPDATE_CHECK else {'available': False}
+    pri = price_increases(since_hours=36)
+    if not (low or exp or probs or upd['available'] or pri): return None
     parts_t, parts_h = [], []
     def sect(title, lines):
         parts_t.append(title + '\n' + '\n'.join('  - ' + l for l in lines))
         parts_h.append(f'<h3 style="margin:16px 0 6px">{title}</h3><ul style="margin:0;padding-left:20px">' + ''.join(f'<li>{_esc(l)}</li>' for l in lines) + '</ul>')
     if probs: sect(_l(f'Systeem ({len(probs)})', f'System ({len(probs)})'), [f'{_l("FOUT", "ERROR") if i["severity"] == "error" else _l("Let op", "Warning")}: {i["title"]}' for i in probs])
+    if upd['available']: sect(_l('Update', 'Update'), [_l(f'Nieuwe versie {upd["latest"]} beschikbaar (nu {APP_VERSION}): {upd["url"]}', f'New version {upd["latest"]} available (now {APP_VERSION}): {upd["url"]}')])
     if low: sect(_l(f'Lage voorraad ({len(low)})', f'Low stock ({len(low)})'), [f'{r["name"]}: {r["stock"] or 0} ({_l("minimaal", "minimum")} {r["minStock"]})' for r in low])
     if exp:
         def lab(d):
@@ -2057,7 +2456,8 @@ def build_digest():
             except ValueError: return d
             return _l('verlopen', 'expired') if n < 0 else _l('verloopt vandaag', 'expires today') if n == 0 else _l(f'verloopt over {n} dagen ({d})', f'expires in {n} days ({d})')
         sect(_l(f'Verloopdatum ({len(exp)})', f'Expiry date ({len(exp)})'), [f'{r["name"]}: {lab(r["expiryDate"])}' for r in exp])
-    bits = [x for x in (_l(f'{len(probs)} systeemmelding(en)', f'{len(probs)} system alert(s)') if probs else '', _l(f'{len(low)} lage voorraad', f'{len(low)} low stock') if low else '', _l(f'{len(exp)} verloopt', f'{len(exp)} expiring') if exp else '') if x]
+    if pri: sect(_l(f'Prijsstijgingen ({len(pri)})', f'Price increases ({len(pri)})'), [f'{i["part"]}{" (" + i["supplier"] + ")" if i["supplier"] else ""}: €{i["prev"]:.2f} → €{i["price"]:.2f} (+{i["pct"]:g}%)' for i in pri])
+    bits = [x for x in (_l(f'{len(probs)} systeemmelding(en)', f'{len(probs)} system alert(s)') if probs else '', _l(f'{len(low)} lage voorraad', f'{len(low)} low stock') if low else '', _l(f'{len(exp)} verloopt', f'{len(exp)} expiring') if exp else '', _l('update beschikbaar', 'update available') if upd['available'] else '', _l(f'{len(pri)} prijsstijging(en)', f'{len(pri)} price increase(s)') if pri else '') if x]
     subject = _l('Overzicht: ', 'Summary: ') + ', '.join(bits)
     foot = _l('Beheer: Menu → Beheer & gezondheid.', 'Admin: Menu → Admin & health.')
     head = _l(f'Overzicht van {today:%d-%m-%Y}', f'Summary for {today:%Y-%m-%d}')
@@ -2331,7 +2731,8 @@ def find_bad_refs(db, ctx):
         bad = [x for x in _jlist(r['related']) if isinstance(x, (int, str)) and
                (not str(x).lstrip('-').isdigit() or int(x) not in ctx['part_ids'] or int(x) == r['id'])]
         if bad: related_bad.append({'id': r['id'], 'name': r['name'], 'bad': bad})
-        bad = [x.get('suppId') for x in _jlist(r['suppliers']) if isinstance(x, dict) and x.get('suppId') not in ctx['supp_ids']]
+        bad = [x.get('suppId') for x in _jlist(r['suppliers']) if isinstance(x, dict) and x.get('suppId') not in (None, '')
+               and str(x.get('suppId')) not in {str(i) for i in ctx['supp_ids']}]   # "3" en 3 zijn dezelfde leverancier; een regel zonder leverancier is geen fout
         if bad: supp_bad.append({'id': r['id'], 'name': r['name'], 'bad': bad})
     return cat_bad, loc_bad, extra_bad, related_bad, supp_bad
 
@@ -2431,8 +2832,13 @@ def run_checks(db, include_media=True):
                                        repair='clean_extra_locs', inspect='parts'))
     if related_bad: issues.append(_issue('invalid_related', 'info', 'Gerelateerde onderdelen die niet bestaan', related_bad,
                                          repair='clean_related', inspect='parts'))
-    if supp_bad: issues.append(_issue('invalid_suppliers', 'info', 'Leveranciersregels met een leverancier die niet bestaat', supp_bad,
-                                      inspect='parts', detail='Alleen melden; controleer de prijzen handmatig.'))
+    if supp_bad:
+        ids = sorted({str(b) for x in supp_bad for b in x['bad']})
+        n_lines = sum(len(x['bad']) for x in supp_bad)
+        issues.append(_issue('invalid_suppliers', 'info', 'Prijsregels met een leverancier die niet (meer) bestaat', supp_bad, repair='clean_suppliers', inspect='parts',
+                             detail=f'{n_lines} regel(s) bij {len(supp_bad)} onderdeel/onderdelen verwijzen naar leverancier-ID {", ".join(ids[:8])}{"…" if len(ids) > 8 else ""}, die niet in je leverancierslijst staat. '
+                                    'Er gaat niets kapot: die regels tonen alleen geen leveranciersnaam. Oplossen: maak de leverancier opnieuw aan (Menu → Leveranciers) '
+                                    'of verwijder die regels met de knop hieronder (eerst een voorbeeld; er wordt vooraf een back-up gemaakt). De prijs en link in die regels gaan dan verloren.'))
     oc = find_orphan_categories(db, ctx)
     if oc: issues.append(_issue('orphan_categories', 'warning', 'Categorieën met een hoofdcategorie die niet bestaat', oc,
                                 repair='fix_orphan_categories', detail='Herstellen maakt ze hoofdcategorie.'))
@@ -2517,6 +2923,17 @@ def _rep_clean_list_field(field, bad_idx):
         return {'affected': [b['id'] for b in bad], 'changes': len(bad)}
     return run
 
+def _rep_clean_suppliers(db, ctx, apply):
+    known = {str(i) for i in ctx['supp_ids']}
+    affected = []
+    for r in db.execute('SELECT id,name,suppliers FROM parts').fetchall():
+        lines = _jlist(r['suppliers'])
+        keep = [x for x in lines if not (isinstance(x, dict) and x.get('suppId') not in (None, '') and str(x.get('suppId')) not in known)]
+        if len(keep) != len(lines):
+            affected.append({'id': r['id'], 'name': r['name'], 'removed': [x for x in lines if x not in keep]})
+            if apply: db.execute('UPDATE parts SET suppliers=? WHERE id=?', (json.dumps(keep), r['id']))
+    return {'affected': [a['id'] for a in affected], 'changes': sum(len(a['removed']) for a in affected), 'details': affected[:50]}
+
 def _rep_fix_orphan_categories(db, ctx, apply):
     oc = find_orphan_categories(db, ctx)
     if apply:
@@ -2566,6 +2983,7 @@ REPAIRS = {
     'clear_invalid_location': ('Ongeldige locaties leegmaken', _rep_clear_invalid_location),
     'clean_extra_locs': ('Ongeldige extra locaties verwijderen', _rep_clean_list_field('extraLocs', 2)),
     'clean_related': ('Ongeldige gerelateerde onderdelen verwijderen', _rep_clean_list_field('related', 3)),
+    'clean_suppliers': ('Regels met onbekende leverancier verwijderen', _rep_clean_suppliers),
     'fix_orphan_categories': ('Wees-categorieën hoofdcategorie maken', _rep_fix_orphan_categories),
     'merge_duplicate_locations': ('Dubbele locaties samenvoegen', _rep_merge_duplicate_locations),
     'clear_broken_media': ('Ontbrekende foto-/documentverwijzingen wissen', _rep_clear_broken_media),
@@ -2666,7 +3084,7 @@ def system_info():
             'sqlite': sqlite3.sqlite_version, 'pillow': _has_module('PIL'), 'openpyxl': _has_module('openpyxl'),
             'gemini_configured': bool(GEMINI_API_KEY), 'telegram_configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
             'mail_configured': mail_configured(), 'mail_digest_time': MAIL_DIGEST_TIME if mail_configured() else '', 'mail_last_ok': MAIL_STATE['last_ok'], 'mail_last_error': MAIL_STATE['last_error'],
-            'admin_token_required': bool(ADMIN_TOKEN), 'auth_enabled': auth_enabled(),
+            'update_check': UPDATE_CHECK, 'update_install': UPDATE_INSTALL, 'admin_token_required': bool(ADMIN_TOKEN), 'auth_enabled': auth_enabled(),
             'settings': {'backup_time': BACKUP_TIME, 'backup_retention_days': BACKUP_RETENTION_DAYS, 'backup_keep_min': BACKUP_KEEP_MIN,
                          'backup_stale_hours': BACKUP_STALE_HOURS, 'max_upload_mb': MAX_UPLOAD_MB, 'media_max_mb': MEDIA_MAX_MB,
                          'orphan_grace_min': ORPHAN_GRACE_MIN, 'log_max_mb': LOG_MAX_MB, 'log_backups': LOG_BACKUPS}}
@@ -3423,6 +3841,8 @@ def startup_check():
 
 def start_background_jobs():
     t = threading.Thread(target=auto_backup, daemon=True, name='hb-backup'); t.start()
+    threading.Thread(target=value_loop, daemon=True, name='hb-value').start()
+    if UPDATE_CHECK: threading.Thread(target=update_loop, daemon=True, name='hb-update').start()
     if mail_configured() and MAIL_DIGEST_TIME:
         threading.Thread(target=mail_digest_loop, daemon=True, name='hb-mail-digest').start()
         log_event('mail', 'info', f'Dagelijks overzicht per e-mail om {MAIL_DIGEST_TIME} naar {len(MAIL_TO)} ontvanger(s)')

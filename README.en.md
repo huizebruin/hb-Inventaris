@@ -73,6 +73,14 @@ deleting) is under **⋯ More**.
 
 <img src="docs/screenshots/bulk-desktop.png" alt="Bulk bar with Location, Category, Stock and the More menu" width="100%">
 
+## Scanning, labels and ordering
+
+- **QR codes and labels.** *Menu → Print labels* makes a label with a QR code per part (opens the part); *Print location labels* makes one label per bin, cabinet or drawer. Scan that label and you only see the parts in that place. QR codes are drawn locally in your browser: they work offline and nothing is sent to an external QR service.
+- **Scanning with the phone camera.** *Menu → Scanner*. Chrome/Android also scans barcodes; on iPhone/Safari and Firefox the built-in QR reader is used automatically (QR only). The camera needs https or localhost.
+- **Recognize via photo** (requires `GEMINI_API_KEY`). In the scanner: *Recognize via photo*. Gemini describes what it sees and the app finds the best matches in your inventory, with buttons to book a quantity in or out right away (the counted quantity is pre-filled). With *New part via photo*, several kinds of parts in one photo appear as separate suggestions; add each as a new part with one click.
+- **Order list** (*Menu → Order*). Combines parts below minimum stock with the shortages of the projects (BOM) you tick, picks one supplier per part (the cheapest or the first) and groups by supplier. Per supplier: CSV, copy *SKU;quantity* (pasteable into many shops' bulk-order feature) and open all product links.
+- **Stock value and prices.** *Dashboard → Stock* shows the stock value over time (recorded daily; the past is estimated once from the movement history and drawn dotted). If a supplier price rises by at least `HB_PRICE_ALERT_PCT` percent (default 10), you get a notice in the bell and in the daily email digest.
+
 ## Notifications and menu
 
 **Notifications:** the separate badges in the header have been replaced by a single bell with
@@ -168,6 +176,8 @@ GitHub Actions runs this on every push. Changes are listed in [CHANGELOG.en.md](
 Under **Menu → Admin → Admin & health** you'll find a dashboard with database size, disk space, last/next backup and
 integrity status, a check with repair actions, backups (with retention and restore with verification), import/export
 (CSV, Excel, JSON with a preview before saving), media cleanup and the log. See [docs/ADMIN.en.md](docs/ADMIN.en.md).
+
+**Updates:** the app tells you when a newer version is on GitHub (bell and *Updates* tab) and, on installs without Docker, can update itself with one click after an automatic backup. See [docs/ADMIN.en.md](docs/ADMIN.en.md#updates).
 New optional settings are in `.env.example`.
 
 ## Keyboard shortcuts

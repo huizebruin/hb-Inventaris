@@ -5,6 +5,31 @@
 Alle noemenswaardige wijzigingen. Formaat volgens [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/),
 versies volgens [SemVer](https://semver.org/lang/nl/).
 
+## [3.9.2] - 2026-10-25
+
+### Toegevoegd
+- **Locatielabels en scannen:** QR-label per bak/kast/lade (*Locatielabels printen*); scannen toont alleen de onderdelen op die plek. De camera-scanner werkt nu ook op iPhone/Safari en Firefox (ingebouwde QR-lezer).
+- **QR-codes lokaal:** worden in de browser getekend (offline, geen externe QR-dienst meer). Meegeleverd in `static/vendor/` (qrcode-generator MIT, jsQR Apache-2.0).
+- **Herkennen via foto in de scanner:** Gemini beschrijft het onderdeel, de app zoekt de beste treffers in je voorraad en boekt met één klik een aantal af of bij.
+- **Meerdere soorten op één foto:** worden als aparte voorstellen getoond en kunnen elk met één klik als nieuw onderdeel worden toegevoegd.
+- **Bestellijst per leverancier:** combineert lage voorraad met de BOM-tekorten van aangevinkte projecten, kiest één leverancier per onderdeel (goedkoopste of eerste), met CSV, *SKU;aantal* kopiëren en alle links openen per leverancier.
+- **Voorraadwaarde in de tijd** (Dashboard → Voorraad): dagelijks vastgelegd, het verleden wordt eenmalig geschat uit de mutatiegeschiedenis.
+- **Prijsstijgingsmelding:** prijswijzigingen bij leveranciers worden vastgelegd; een stijging van minstens `HB_PRICE_ALERT_PCT` (standaard 10%) komt in het belletje, het dashboard en het dagelijkse e-mailoverzicht.
+- **Nieuw onderdeel via foto:** *Menu → Beheer → Nieuw onderdeel via foto*. Maak een foto, Gemini herkent het onderdeel en telt het aantal (aangegeven als *geteld* of *geschat*). Aantal en foto kun je met één klik overnemen. Waarschuwt als er meerdere soorten op de foto staan. Vereist `GEMINI_API_KEY`.
+- **Updatemelding:** de app kijkt elke 12 uur bij GitHub naar een nieuwere release en meldt dat in het belletje, in Beheer en in het dagelijkse overzicht per e-mail. Tab *Updates* met release-notities.
+- **Zelf bijwerken** (niet bij Docker): downloadt de release, controleert SHA-256, paden en inhoud, maakt eerst een back-up van database en programmacode, past toe, herstart en zet bij een fout automatisch terug. Zie `docs/ADMIN.md#updates`.
+- Instellingen `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` en `HB_UPDATE_REPO`.
+
+### Gewijzigd
+- **CSV-exports** (bestellijst en BOM) hadden alle regels op één regel; nu echte regeleinden, en cellen die met `=`, `+`, `-` of `@` beginnen worden veilig gemaakt voor Excel.
+- De deep link `?loc=ID` (locatiefilter) werkte niet; nu wel, ook voor extra locaties.
+- Databaseschema 4: tabellen `value_snapshots` en `price_log` (automatische migratie met back-up vooraf).
+- `.env` wordt nu ook gelezen uit de map naast `server.py` (naast `data/.env`); aanhalingstekens en BOM worden netjes verwerkt. De melding bij een ontbrekende `GEMINI_API_KEY` wijst nu de juiste plek aan.
+- De controle *Prijsregels met een leverancier die niet (meer) bestaat* legt nu uit wat er aan de hand is, vergelijkt ID's tolerant (tekst "3" = getal 3, lege waarden worden genegeerd) en heeft een herstelknop die de verwijzende regels verwijdert (met voorbeeld, automatische back-up en logboek).
+
+### Upgraden van 3.9.1
+Geen databasemigratie. Bouw opnieuw (`docker compose up -d --build`) of kopieer de nieuwe bestanden.
+
 ## [3.9.1] - 2026-10-24
 
 ### Toegevoegd

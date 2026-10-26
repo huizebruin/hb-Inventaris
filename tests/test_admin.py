@@ -308,3 +308,23 @@ def test_ai_errors_are_logged(srv, client, monkeypatch):
     assert r.status_code == 502
     assert 'ai |' in open(srv.LOG_FILE, encoding='utf-8').read()
     assert 'ai' in client.get('/api/admin/logs?level=warning').get_json()['summary']['by_category']
+
+
+def test_supplier_lines_string_ids_are_not_flagged_and_unknown_can_be_cleaned(srv, client):
+    import json
+    db = _db(srv)
+    sid = db.execute('SELECT MIN(id) FROM suppliers').fetchone()[0]
+    if sid is None:
+        db.execute("INSERT INTO suppliers (id,name) VALUES (1,'Test')"); sid = 1
+    lines = [{'suppId': str(sid), 'price': 1}, {'suppId': None, 'price': 2}, {'suppId': 9999, 'price': 3, 'link': 'x'}]
+    db.execute('UPDATE parts SET suppliers=? WHERE id=1', (json.dumps(lines),)); db.commit(); db.close()
+    issues = {i['code']: i for i in client.get('/api/admin/integrity').get_json()['issues']}
+    bad = issues['invalid_suppliers']
+    assert bad['count'] == 1 and bad['items'][0]['bad'] == [9999] and '9999' in bad['detail'] and bad['repair'] == 'clean_suppliers'
+    pre = client.post('/api/admin/repair', json={'action': 'clean_suppliers'}).get_json()
+    assert pre['preview'] and pre['confirm_required'] and pre['affected'] == [1]
+    res = client.post('/api/admin/repair', json={'action': 'clean_suppliers', 'confirm': True}).get_json()
+    assert res['changes'] == 1 and res['safety_backup'].endswith('pre-repair.db')
+    got = next(p for p in client.get('/api/data').get_json()['parts'] if p['id'] == 1)
+    assert [x['price'] for x in got['suppliers']] == [1, 2]
+    assert 'invalid_suppliers' not in {i['code'] for i in client.get('/api/admin/integrity').get_json()['issues']}

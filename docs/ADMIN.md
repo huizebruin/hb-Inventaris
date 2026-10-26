@@ -74,3 +74,17 @@ Optioneel `SMTP_FROM`, `HB_MAIL_DIGEST_TIME`, `HB_MAIL_EXPIRY_DAYS`, `HB_MAIL_AL
 - *Beheer → Overzicht* heeft knoppen voor een testmail en om het overzicht meteen te versturen. Fouten staan in het logboek (categorie `mail`).
 
 Het wachtwoord staat alleen in `.env`; de app toont het nergens.
+
+## Updates
+
+De app kijkt elke 12 uur bij GitHub of er een nieuwere release is. Is die er, dan krijg je een melding in het belletje (⬆ Nieuwe versie …),
+een kaart in *Beheer → Overzicht*, een regel in het dagelijkse overzicht per e-mail en een tab **Updates** met de release-notities.
+
+- **Docker:** de app kan zichzelf niet bijwerken. In de tab staan de commando's (`git pull` en `docker compose up -d --build`); database en media blijven bewaard.
+- **Windows / zonder Docker:** de knop *Bijwerken naar …* downloadt de release-zip, controleert de SHA-256-controlesom, de paden en de inhoud, maakt **eerst een back-up**
+  van de database (`…-pre-update.db`) en de programmacode (`code-<versie>-….zip` in de back-upmap, de laatste 3 blijven), vervangt de programmabestanden en herstart de app.
+  `data/`, `media/`, `backups/`, `.env` en het startbestand blijven ongemoeid. Gaat er iets mis, dan wordt automatisch teruggezet. Migraties draaien bij de herstart (met een eigen back-up).
+- **Handmatig terugzetten:** pak het `code-…zip` uit de back-upmap uit over de programmamap en start de app; zet zo nodig ook de `…-pre-update.db` terug via *Back-ups*.
+- **Uitzetten:** `HB_UPDATE_CHECK=0` (geen contact met GitHub) of `HB_UPDATE_INSTALL=0` (wel melden, niet zelf bijwerken). Zit er een `HB_ADMIN_TOKEN` op, dan is dat ook voor bijwerken nodig.
+
+Alleen releases van de eigen repository (`HB_UPDATE_REPO`) met een `.sha256`-controlebestand worden geaccepteerd. Het wordt via HTTPS gedownload, maar je voert dus wel code van GitHub uit: zet bijwerken uit als je dat niet wilt.

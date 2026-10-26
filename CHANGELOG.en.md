@@ -5,6 +5,31 @@
 All notable changes. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [SemVer](https://semver.org/).
 
+## [3.9.2] - 2026-10-25
+
+### Added
+- **Location labels and scanning:** QR label per bin/cabinet/drawer (*Print location labels*); scanning shows only the parts in that place. The camera scanner now also works on iPhone/Safari and Firefox (built-in QR reader).
+- **QR codes drawn locally:** in the browser (offline, no external QR service any more). Bundled in `static/vendor/` (qrcode-generator MIT, jsQR Apache-2.0).
+- **Recognize via photo in the scanner:** Gemini describes the part, the app finds the best matches in your inventory and books a quantity in or out with one click.
+- **Several kinds on one photo:** shown as separate suggestions, each can be added as a new part with one click.
+- **Order list per supplier:** combines low stock with the BOM shortages of ticked projects, picks one supplier per part (cheapest or first), with CSV, copy *SKU;quantity* and open all links per supplier.
+- **Stock value over time** (Dashboard → Stock): recorded daily; the past is estimated once from the movement history.
+- **Price increase alert:** supplier price changes are recorded; a rise of at least `HB_PRICE_ALERT_PCT` (default 10%) shows in the bell, the dashboard and the daily email digest.
+- **New part from a photo:** *Menu → Admin → New part via photo*. Take a photo, Gemini identifies the part and counts the quantity (marked *counted* or *estimated*). Take over quantity and photo with one click. Warns when several types are in the photo. Requires `GEMINI_API_KEY`.
+- **Update notification:** every 12 hours the app checks GitHub for a newer release and tells you in the bell, in Admin and in the daily email digest. *Updates* tab with release notes.
+- **Self-update** (not with Docker): downloads the release, verifies SHA-256, paths and contents, first backs up the database and program code, applies it, restarts and rolls back automatically on error. See `docs/ADMIN.en.md#updates`.
+- Settings `HB_UPDATE_CHECK`, `HB_UPDATE_INSTALL` and `HB_UPDATE_REPO`.
+
+### Changed
+- **CSV exports** (order list and BOM) had all rows on one line; now proper line breaks, and cells starting with `=`, `+`, `-` or `@` are made safe for Excel.
+- The deep link `?loc=ID` (location filter) did not work; it does now, including extra locations.
+- Database schema 4: tables `value_snapshots` and `price_log` (automatic migration with prior backup).
+- `.env` is now also read from the folder next to `server.py` (besides `data/.env`); quotes and BOM are handled. The message for a missing `GEMINI_API_KEY` now points to the right place.
+- The check *Price lines with a supplier that no longer exists* now explains the problem, compares IDs tolerantly (text "3" = number 3, empty values ignored) and has a repair button that removes the referencing lines (with preview, automatic backup and log).
+
+### Upgrading from 3.9.1
+No database migration. Rebuild (`docker compose up -d --build`) or copy the new files.
+
 ## [3.9.1] - 2026-10-24
 
 ### Added

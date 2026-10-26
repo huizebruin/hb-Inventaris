@@ -2,7 +2,7 @@
 // Eén venster met tabs: Overzicht, Gezondheid, Back-ups, Import/Export, Media en Logboek.
 // Alle destructieve acties tonen eerst een voorbeeld en vragen bevestiging; de server maakt vooraf een backup.
 (function () {
-  const TABS = [['ov', '📊 Overzicht'], ['health', '🩺 Gezondheid'], ['bk', '💾 Back-ups'], ['io', '🔄 Import / export'], ['media', '🖼 Media'], ['log', '📜 Logboek']];
+  const TABS = [['ov', '📊 Overzicht'], ['health', '🩺 Gezondheid'], ['bk', '💾 Back-ups'], ['io', '🔄 Import / export'], ['media', '🖼 Media'], ['upd', '⬆ Updates'], ['log', '📜 Logboek']];
   let tab = 'ov', imp = null, logF = { level: 'warning', category: '', q: '' };
   const $ = id => document.getElementById(id);
   const E = s => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
@@ -38,17 +38,17 @@
     tab = t;
     document.querySelectorAll('#adminOvl .adm-tab').forEach(b => { const on = b.dataset.arg === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
     busy();
-    ({ ov: tOverview, health: tHealth, bk: tBackups, io: tIO, media: tMedia, log: tLog }[t])().catch(err);
+    ({ ov: tOverview, health: tHealth, bk: tBackups, io: tIO, media: tMedia, upd: tUpdate, log: tLog }[t])().catch(err);
   }
 
   // ── Overzicht ────────────────────────────────────────────────
   async function tOverview() {
-    const d = await api('/api/admin/overview');
+    const [d, upd] = await Promise.all([api('/api/admin/overview'), api('/api/update').catch(() => null)]);
     const s = d.system, h = d.health, st = d.storage, bk = d.backup, lg = d.log;
     $('admStatus').innerHTML = badge(h.status, SEV[h.status]);
     const card = (l, v, sub, cls) => `<div class="adm-card ${cls || ''}"><div class="l">${l}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
     const lv = bk.last_valid;
-    let html = '<div class="adm-grid">' +
+    let html = (upd && upd.available ? `<div class="adm-issue warning"><div class="t">⬆ Nieuwe versie ${E(upd.latest)} beschikbaar (nu ${E(upd.current)})</div><div class="acts"><button class="btn sm" data-act="tab" data-arg="upd">Bekijken en bijwerken</button></div></div>` : '') + '<div class="adm-grid">' +
       card('Versie', E(s.version), 'build ' + E(s.build) + ' · schema ' + s.schema_version + '/' + s.schema_latest) +
       card('Gestart', fdt(s.started_at), 'actief ' + dur(s.uptime_seconds)) +
       card('Database', SZ(st.db_size), h.database.integrity === 'ok' ? 'integriteit OK' : '⚠ ' + E(h.database.integrity), h.database.integrity === 'ok' ? 'ok' : 'error') +
@@ -236,6 +236,52 @@
     $('admBody').innerHTML = h;
   }
 
+  // ── Updates ──────────────────────────────────────────────────
+  async function tUpdate() {
+    const u = await api('/api/update?refresh=1');
+    const reasons = {
+      check_disabled: 'De updatecontrole staat uit (HB_UPDATE_CHECK=0).',
+      install_disabled: 'Zelf bijwerken staat uit (HB_UPDATE_INSTALL=0). Werk de app handmatig bij.',
+      not_writable: 'De programmamap is niet beschrijfbaar voor de app. Werk de app handmatig bij.',
+      no_package: 'Deze release heeft geen zip met controlebestand. Werk de app handmatig bij.',
+    };
+    let h = `<div class="adm-grid"><div class="adm-card"><div class="l">Geïnstalleerd</div><div class="v">${E(u.current)}</div></div>
+      <div class="adm-card ${u.available ? 'warning' : 'ok'}"><div class="l">Nieuwste versie</div><div class="v">${E(u.latest || '—')}</div><div class="s">${u.available ? 'update beschikbaar' : u.latest ? 'je bent bij' : ''}</div></div>
+      <div class="adm-card"><div class="l">Laatst gecontroleerd</div><div class="v" style="font-size:14px">${fdt(u.checked_at)}</div><div class="s">elke 12 uur automatisch</div></div></div>`;
+    if (!u.enabled) h += `<div class="adm-note">${E(reasons.check_disabled)}</div>`;
+    if (u.error) h += `<div class="adm-note" style="color:var(--red)">⚠ Controleren op GitHub is niet gelukt: ${E(u.error)}</div>`;
+    if (u.available) {
+      h += `<div class="adm-h">Wat is er nieuw in ${E(u.latest)}</div><pre class="adm-pre" style="white-space:pre-wrap;max-height:260px;overflow:auto;font-size:12px">${E(u.notes || 'Geen release-notities.')}</pre>
+        <div style="margin-top:6px"><a href="${E(u.url)}" target="_blank" rel="noopener" style="color:var(--acc2)">Bekijk de release op GitHub ↗</a></div>`;
+      if (u.install_possible) {
+        h += `<div class="adm-note" style="margin-top:12px">Bijwerken downloadt de release van GitHub, controleert de controlesom (SHA-256), maakt eerst een back-up van de database en de programmacode, vervangt de programmabestanden (data, media, back-ups en .env blijven ongemoeid) en herstart de app. Dat duurt ongeveer 10 seconden. Bij een fout wordt automatisch teruggezet.</div>
+          <div style="margin-top:8px"><button class="btn sm" data-act="doupdate" data-arg="${E(u.latest)}">⬆ Bijwerken naar ${E(u.latest)}</button></div>`;
+      } else if (u.install_blocked === 'docker') {
+        h += `<div class="adm-h">Bijwerken (Docker)</div><div class="adm-note">Bij Docker bouw je de image opnieuw. Voer uit in de map van het project (database en media blijven bewaard):</div>
+          <pre class="adm-pre" style="user-select:all">${E(u.commands.join('\n'))}</pre>
+          <div class="adm-note">Geen git? Download de zip bij de release, kopieer alle bestanden over je projectmap (niet data, media, backups of .env) en voer alleen het tweede commando uit.</div>`;
+      } else h += `<div class="adm-note" style="margin-top:12px">${E(reasons[u.install_blocked] || '')}</div>`;
+    } else if (u.latest) h += '<div class="adm-ok" style="margin-top:12px">✓ Je gebruikt de nieuwste versie</div>';
+    h += '<div class="acts" style="margin-top:14px"><button class="btn sec sm" data-act="tab" data-arg="upd">↻ Opnieuw controleren</button></div>';
+    $('admBody').innerHTML = h;
+  }
+
+  async function doUpdate(ver) {
+    if (!confirm(`Bijwerken naar ${ver}?\n\nEr wordt eerst automatisch een back-up gemaakt van de database en de programmacode.\nDe app herstart daarna en is zo'n 10 seconden niet bereikbaar.`)) return;
+    $('admBody').innerHTML = '<div class="adm-note"><i class="spin">⟳</i> Bijwerken… even geduld, dit venster niet sluiten.</div>';
+    let r;
+    try { r = await api('/api/admin/update/install', 'POST', { version: ver, confirm: true }); }
+    catch (e) { err(e); return; }
+    $('admBody').innerHTML = `<div class="adm-ok">✓ Bijgewerkt naar ${E(ver)}</div><ul>${r.steps.map(x => `<li>${E(x)}</li>`).join('')}</ul><div class="adm-note"><i class="spin">⟳</i> De app herstart…</div>`;
+    const t0 = Date.now();
+    const poll = async () => {
+      try { const j = await (await fetch('/api/health', { cache: 'no-store' })).json(); if (j.version === ver) { location.reload(); return; } } catch (e) { }
+      if (Date.now() - t0 > 90000) { $('admBody').innerHTML += '<div class="adm-note" style="color:var(--red)">De app komt niet terug. Start hem handmatig opnieuw (bij Windows: via het startbestand). De vorige programmacode staat als zip in de back-upmap.</div>'; return; }
+      setTimeout(poll, 2000);
+    };
+    setTimeout(poll, 4000);
+  }
+
   // ── Logboek ──────────────────────────────────────────────────
   async function tLog() {
     const q = new URLSearchParams({ limit: 300, level: logF.level, category: logF.category, q: logF.q });
@@ -245,7 +291,7 @@
       <div class="adm-card"><div class="l">Logbestand</div><div class="v">${SZ(d.summary.file_size)}</div><div class="s">rotatie: ${d.summary.rotation.max_mb} MB × ${d.summary.rotation.backups}</div></div></div>`;
     if (cats.length) h += `<div class="adm-note">Per categorie (24u): ${cats.map(c => `<b>${E(c)}</b> ${d.summary.by_category[c].errors} fouten / ${d.summary.by_category[c].warnings} waarschuwingen`).join(' · ')}</div>`;
     h += `<div class="adm-filters"><select data-f="level">${[['info', 'Alles'], ['warning', 'Waarschuwingen+'], ['error', 'Alleen fouten']].map(([v, l]) => `<option value="${v}" ${logF.level === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <select data-f="category"><option value="">Alle categorieën</option>${['app', 'db', 'media', 'upload', 'backup', 'restore', 'repair', 'import', 'export', 'ai', 'startup', 'admin', 'auth', 'mail'].map(c => `<option ${logF.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <select data-f="category"><option value="">Alle categorieën</option>${['app', 'db', 'media', 'upload', 'backup', 'restore', 'repair', 'import', 'export', 'ai', 'startup', 'admin', 'auth', 'mail', 'update'].map(c => `<option ${logF.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
       <input data-f="q" placeholder="Zoek in logboek…" value="${E(logF.q)}"><a class="btn sec sm" href="/api/admin/logs/download" download>↓ Logbestand</a></div>`;
     h += d.entries.length ? `<table class="adm-tbl adm-log">${d.entries.map(e => `<tr class="${e.level}"><td style="white-space:nowrap">${e.ts}</td><td>${e.level}</td><td>${E(e.category)}</td><td>${E(e.message)}</td></tr>`).join('')}</table>` : '<div class="adm-ok">Geen meldingen</div>';
     $('admBody').innerHTML = h;
@@ -266,6 +312,7 @@
     try {
       if (a === 'close') closeAdmin();
       else if (a === 'tab') go(arg);
+      else if (a === 'doupdate') await doUpdate(arg);
       else if (a === 'items') { const box = $('admItems' + arg); box.hidden = !box.hidden; if (!box.innerHTML) box.innerHTML = lastIssues[arg].items.map(i => `<div>${itemLine(i)}</div>`).join('') + (lastIssues[arg].count > lastIssues[arg].items.length ? `<div>… en ${lastIssues[arg].count - lastIssues[arg].items.length} meer</div>` : ''); }
       else if (a === 'open') { closeAdmin(); if (typeof selPart === 'function') selPart(parseInt(arg)); }
       else if (a === 'repair') await doRepair(arg);
